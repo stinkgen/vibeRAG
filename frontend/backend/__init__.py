@@ -1,0 +1,1 @@
+"""Backend package for VibeRAG—FastAPI routes and services living here! 🚀""" 

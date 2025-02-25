@@ -1,0 +1,138 @@
+# Presentation Crew Configuration
+
+content_strategist:
+  role: "Content Strategy Expert for {topic} Presentations"
+  goal: "Extract and organize key information into a compelling narrative structure"
+  backstory: >
+    You're a master content strategist with years of experience in creating
+    impactful presentations. You excel at identifying key themes, creating
+    logical flow between ideas, and structuring information for maximum impact.
+  llm:
+    provider: "openai"
+    model: "gpt-4"
+    temperature: 0.7
+    context_window: 4096
+    timeout: 120
+  tools: []  # No special tools needed for content strategy
+  max_iter: 3
+  verbose: true
+  allow_delegation: false
+
+slide_designer:
+  role: "Presentation Design Expert for {topic} Slides"
+  goal: "Create visually stunning and effective slides that enhance the narrative"
+  backstory: >
+    You're an expert presentation designer with deep knowledge of visual design
+    principles and information presentation. You understand how to use layout,
+    typography, and visual elements to create slides that capture attention.
+  llm:
+    provider: "openai"
+    model: "gpt-4"
+    temperature: 0.7
+    context_window: 4096
+    timeout: 120
+  tools: []  # No special tools needed for design
+  max_iter: 3
+  verbose: true
+  allow_delegation: false
+
+editor:
+  role: "Presentation Editor and Quality Assurance Expert"
+  goal: "Ensure consistency, clarity, and impact across all slides"
+  backstory: >
+    You're a meticulous editor with an eye for detail and consistency. Your
+    experience in presentation refinement helps ensure that each slide deck
+    maintains a cohesive style, clear messaging, and professional polish.
+  llm:
+    provider: "openai"
+    model: "gpt-4"
+    temperature: 0.7
+    context_window: 4096
+    timeout: 120
+  tools: []  # No special tools needed for editing
+  max_iter: 3
+  verbose: true
+  allow_delegation: false
+
+tasks:
+  outline:
+    agent: "Content Strategy Expert"
+    description: |
+      Analyze the following content and create an outline for {n_slides} slides:
+
+      {context}
+
+      Create a logical flow that tells a compelling story. For each slide, identify:
+      1. The main topic/theme
+      2. Key points to cover
+      3. How it connects to the overall narrative
+
+      Return the outline in JSON format:
+      {
+        "outline": [
+          {
+            "topic": "Main topic for this slide",
+            "key_points": ["Point 1", "Point 2"],
+            "narrative_connection": "How this fits the story"
+          }
+        ],
+        "presentation_flow": "Description of how the slides connect",
+        "key_themes": ["Theme 1", "Theme 2"]
+      }
+
+  design:
+    agent: "Presentation Design Expert"
+    description: |
+      Using the outline from the content strategist, create the final slides.
+      
+      Each slide must have:
+      1. A punchy title (max 5 words)
+      2. 1-2 bullet points (15-20 words each)
+      3. A visual suggestion (one short sentence)
+      4. A design note about layout/style
+      
+      Return as JSON:
+      {
+        "slides": [
+          {
+            "title": "Title",
+            "content": ["Bullet 1", "Bullet 2"],
+            "visual": "Visual suggestion",
+            "design_note": "Layout/style suggestion",
+            "typography": {"heading": "Font", "body": "Font"},
+            "color_scheme": ["#color1", "#color2"]
+          }
+        ],
+        "design_system": {
+          "primary_colors": ["#color1", "#color2"],
+          "fonts": {"headings": "Font1", "body": "Font2"},
+          "layout_grid": "Layout system description"
+        }
+      }
+
+  review:
+    agent: "Presentation Editor and Quality Assurance Expert"
+    description: |
+      Review and refine the complete presentation to ensure consistency,
+      clarity, and maximum impact. Check for:
+      1. Consistent messaging and tone
+      2. Clear progression of ideas
+      3. Effective use of visuals
+      4. Professional polish
+      5. Adherence to design standards
+      
+      Provide feedback and improvements in JSON format:
+      {
+        "refined_slides": [
+          {
+            "slide_number": 1,
+            "improvements": ["Improvement 1", "Improvement 2"],
+            "style_adjustments": ["Adjustment 1", "Adjustment 2"]
+          }
+        ],
+        "overall_feedback": {
+          "strengths": ["Strength 1", "Strength 2"],
+          "suggestions": ["Suggestion 1", "Suggestion 2"],
+          "consistency_notes": ["Note 1", "Note 2"]
+        }
+      } 

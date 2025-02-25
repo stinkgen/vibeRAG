@@ -1,0 +1,22 @@
+# General Python Rules
+
+**Scope**: Applies to all Python files (`*.py`) in the project.
+
+## Core Rules
+- Use Python 3.11 syntax—none of that old-ass 3.7 crap.
+- Follow PEP 8 like it’s your fuckin’ Bible—clean code or bust.
+- Every function and class gets **type hints** and a **docstring**: what it does, what it takes, what it returns.
+- Write modular code—each module has one job, no tangled messes.
+- Use `logging` instead of `print`—log like a pro, not a rookie.
+- Wrap risky code in `try-except`—handle errors like a boss, don’t crash.
+- Write unit tests with `pytest` for every module—name ‘em `test_<module_name>.py` in a `tests/` folder.
+- Test edge cases and keep tests updated—don’t let shit slip.
+- Keep inline docs short and sharp; update `docs/` with module overviews.
+
+## Environment Dogma
+- **THIS AGENT LIVES IN THE `vibeRAG` CONDA ENVIRONMENT. PERIOD.**
+- Assume all code runs in `vibeRAG`—no exceptions, no deviations.
+- If a package isn’t in `vibeRAG`, the agent must:
+  1. Say: “Yo, this needs `<package>`. Install it with `conda install <package>` or `pip install <package>` in `vibeRAG`.”
+  2. Never suggest code that assumes a different environment.
+- If you catch the agent slipping on this, call it out—it’s a cardinal sin.

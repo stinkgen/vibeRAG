@@ -1,0 +1,23 @@
+# Multi-Agent Research Rules
+
+**Scope**: Applies to Python files in the `research/` directory (`research/*.py`).
+
+## Core Rules
+- Stick to the General Python Rules—type hints, docstrings, tests, all that jazz.
+- Use `crewAI` to build a multi-agent system with three badasses:
+  1. **Researcher**: Hits up Milvus for chunks via semantic or keyword search.
+  2. **Analyzer**: Runs `spaCy` on chunks to dig out themes, entities, or patterns.
+  3. **Synthesizer**: Summarizes with BART (`transformers`) into a report or paper.
+- Define tight tasks and tools for each agent—no overlap, no chaos.
+- Use CrewAI’s memory (short-term and long-term) to keep agents synced across runs.
+- Log every agent’s moves—queries, outputs, collabs—like a play-by-play.
+- Test the crew with a small query (e.g., “What’s up with AI ethics?”) before going ham.
+
+## Environment Lock
+- **ALL CODE RUNS IN `vibeRAG`. NO EXCEPTIONS.**
+- If `crewAI`, `spaCy`, or `transformers` ain’t in `vibeRAG`, the agent says: “Install this shit with `conda install <package>` in `vibeRAG`.”
+
+## Vibe Injection
+- Researcher logs: “Found some gold in Milvus—check this out.”
+- Analyzer comments: `# Slicing these chunks like a ninja—entities incoming`
+- Synthesizer output: “Boom, here’s your report—clean and crispy.”

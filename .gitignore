@@ -1,0 +1,77 @@
+# VibeRAG project .gitignore
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+secrets.json
+**/credentials/*
+**/firebase-config.*
+**/google-credentials.*
+*.key
+*.pem
+*.cert
+
+# Personal data and files
+**/server.log
+volumes/
+storage/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build output
+dist/
+build/
+*.egg-info/
+.eggs/
+.tox/
+.next/
+out/
+
+# IDE/Editor files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.cursor/*
+!.cursor/rules/
+*.sublime-*
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs and temp files
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+temp/
+tmp/
+*.tmp
+*.temp
+
+# Node.js dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Milvus database files
+volumes/milvus/
+volumes/etcd/
+volumes/minio/ 

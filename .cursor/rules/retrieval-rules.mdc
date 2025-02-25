@@ -1,0 +1,11 @@
+# Retrieval Module Rules
+
+These rules apply to Python files in the `retrieval/` directory.
+
+- Stick to the General Python Rules for all baseline standards.
+- Use Milvus for semantic search—vector similarity all the way.
+- Add keyword search with Milvus scalar filtering—exact matches when you need ‘em.
+- Combine both into a hybrid search option—best of both worlds.
+- Return top-5 chunks ranked by relevance—adjustable if needed.
+- Log queries and results—see what’s hitting and what’s missing.
+- Tweak Milvus params (e.g., index type) for speed—don’t sleep on optimization.

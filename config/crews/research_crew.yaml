@@ -1,0 +1,118 @@
+# Research Crew Configuration
+
+researcher:
+  role: "Research Specialist for {topic}"
+  goal: "Conduct comprehensive research and gather relevant information"
+  backstory: >
+    You're a dedicated research professional with years of experience in
+    analyzing complex information and extracting key insights. Your expertise
+    helps in finding and organizing the most relevant information.
+  llm:
+    provider: "openai"
+    model: "gpt-4"
+  max_iter: 3
+  verbose: true
+  allow_delegation: false
+
+analyst:
+  role: "Data Analyst for {topic}"
+  goal: "Analyze and synthesize research findings into meaningful insights"
+  backstory: >
+    You're an experienced data analyst with a talent for finding patterns
+    and drawing meaningful conclusions from complex information. Your analytical
+    skills help transform raw data into actionable insights.
+  llm:
+    provider: "openai"
+    model: "gpt-4"
+  max_iter: 3
+  verbose: true
+  allow_delegation: false
+
+synthesizer:
+  role: "Research Synthesizer for {topic}"
+  goal: "Combine insights into a cohesive narrative and clear recommendations"
+  backstory: >
+    You're a skilled synthesizer with expertise in combining diverse pieces
+    of information into clear, actionable narratives. Your ability to see
+    the big picture helps create meaningful recommendations.
+  llm:
+    provider: "openai"
+    model: "gpt-4"
+  max_iter: 3
+  verbose: true
+  allow_delegation: false
+
+tasks:
+  research:
+    description: >
+      Conduct thorough research on {topic} using available information.
+      
+      Consider:
+      1. Key concepts and terminology
+      2. Recent developments and trends
+      3. Important relationships and dependencies
+      4. Contrasting viewpoints or approaches
+      
+      Return findings in JSON format:
+      {
+          "key_findings": [
+              {
+                  "topic": "Main topic",
+                  "findings": ["Finding 1", "Finding 2"],
+                  "sources": ["Source 1", "Source 2"]
+              }
+          ],
+          "search_coverage": {
+              "internal_docs": ["Doc 1", "Doc 2"],
+              "completeness_score": 0.85
+          }
+      }
+    agent: researcher
+
+  analysis:
+    description: >
+      Analyze the research findings to identify patterns, trends, and insights.
+      Process the information to uncover meaningful connections and implications.
+      
+      Provide analysis in JSON format:
+      {
+          "patterns": [
+              {
+                  "pattern": "Identified pattern",
+                  "evidence": ["Evidence 1", "Evidence 2"],
+                  "implications": ["Implication 1", "Implication 2"]
+              }
+          ],
+          "key_metrics": {
+              "trend_strength": 0.85,
+              "pattern_reliability": 0.9
+          }
+      }
+    agent: analyst
+
+  synthesis:
+    description: >
+      Create a comprehensive research report that synthesizes the findings
+      and analysis into a clear, well-structured document.
+      
+      The report should include:
+      1. Executive summary
+      2. Key findings and insights
+      3. Detailed analysis and implications
+      4. Supporting evidence and sources
+      5. Recommendations or next steps
+      
+      Return the report in JSON format:
+      {
+          "title": "Research Report Title",
+          "executive_summary": "Brief overview",
+          "key_findings": ["Finding 1", "Finding 2"],
+          "detailed_analysis": "In-depth analysis text",
+          "recommendations": ["Recommendation 1", "Recommendation 2"],
+          "sources": ["Source 1", "Source 2"],
+          "metadata": {
+              "confidence_level": 0.9,
+              "completeness_score": 0.95
+          }
+      }
+    agent: synthesizer 

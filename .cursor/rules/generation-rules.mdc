@@ -1,0 +1,10 @@
+# Generation Module Rules
+
+These rules apply to Python files in the `generation/` directory.
+
+- Stick to the General Python Rules for all baseline standards.
+- For "Chat with Knowledge": grab top-5 chunks, feed ‘em to the LLM with the query, return the response.
+- For "Create Presentation": retrieve chunks, summarize with BART (`transformers`), structure into slides.
+- Output presentations as JSON: `{ "slides": [{"title": "...", "content": "..."}] }`.
+- Log the process—chunks used, summary steps, final output size.
+- If no chunks match, return a "nothing found" message—keep it smooth.

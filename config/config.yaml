@@ -1,0 +1,72 @@
+# VibeRAG Configuration
+
+chat:
+  model: "gpt-4"
+  provider: "openai"
+  temperature: 0.7
+  chunks_limit: 10
+  ollama_url: "http://localhost:11434"
+
+presentation:
+  model: "gpt-4"
+  provider: "openai"
+  temperature: 0.7
+  chunks_limit: 10
+
+research:
+  model: "gpt-4"
+  provider: "openai"
+  temperature: 0.5
+  chunks_limit: 10
+
+web_search:
+  limit: 3
+
+embedding:
+  model_name: "all-MiniLM-L6-v2"
+  batch_size: 32
+  device: "cuda"  # Will fallback to CPU if CUDA not available
+
+ingestion:
+  chunk_size: 512  # Token limit per chunk
+  overlap: 50      # Overlap between chunks
+
+milvus:
+  collection_name: "vibe_chunks"
+  embedding_dim: 384  # all-MiniLM-L6-v2's dimension
+  default_batch_size: 100
+  host: "localhost"
+  port: 19530
+  index_params:
+    metric_type: "L2"
+    index_type: "IVF_FLAT"
+    params:
+      nlist: 1024
+  search_params:
+    nprobe: 16
+  field_params:
+    chunk_id:
+      dtype: "INT64"
+      is_primary: true
+      auto_id: true
+    doc_id:
+      dtype: "VARCHAR"
+      max_length: 128
+    embedding:
+      dtype: "FLOAT_VECTOR"
+      dim: 384
+    text:
+      dtype: "VARCHAR"
+      max_length: 65535
+    metadata:
+      dtype: "JSON"
+    tags:
+      dtype: "ARRAY"
+      element_type: "VARCHAR"
+      max_capacity: 50
+      max_length: 128
+    filename:
+      dtype: "VARCHAR"
+      max_length: 512
+
+# Config's clean—magic strings are history! 🔥 

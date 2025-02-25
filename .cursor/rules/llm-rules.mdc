@@ -1,0 +1,11 @@
+# LLM Module Rules
+
+These rules apply to Python files in the `llm/` directory.
+
+- Stick to the General Python Rules for all baseline standards.
+- Abstract LLM calls to work with local models (Ollama) or remote APIs (Anthropic, OpenAI).
+- Add a config option to switch models—don’t hardcode that shit.
+- Store API keys in environment variables—security first, bro.
+- Write a `generate` function: takes a prompt, returns the LLM’s answer.
+- Log model usage, response times, and any errors.
+- If the model’s down or quota’s hit, return a fallback message—no crashes.
