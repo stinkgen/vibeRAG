@@ -1,0 +1,87 @@
+# Yo dawg, keep this sensitive shit OUT 🔒
+.env
+.env.*
+secrets.json
+**/credentials/*
+**/firebase-config.*
+**/google-credentials.*
+*.key
+*.pem
+*.cert
+
+# Conda env - stay in your lane 🐍
+DORK/
+envs/DORK/
+.conda/
+conda-meta/
+
+# Node.js bullshit - npm can fuck right off 📦
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+package-lock.json
+yarn.lock
+
+# Python bytecode - no one needs this garbage 🗑️
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build shit - keep it local fam 🏗️
+dist/
+build/
+*.egg-info/
+.eggs/
+.tox/
+.next/
+out/
+
+# IDE/Editor drama - miss me with that 🎯
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.cursor/*
+!.cursor/rules/
+*.sublime-*
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs and temp files - yeet that shit 📝
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+temp/
+tmp/
+*.tmp
+*.temp
+
+# Redis dump - keep your dumps to yourself 💾
+dump.rdb
+*.rdb
+
+# Firestore local shit - stay local homie 🔥
+.firebaserc
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+.firebase/
+
+# Test coverage - what happens in tests stays in tests 🧪
+coverage/
+.coverage
+.coverage.*
+coverage.xml
+*.cover 

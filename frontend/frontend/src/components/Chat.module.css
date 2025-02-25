@@ -1,0 +1,799 @@
+.container {
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    height: 100%;
+    padding: 0;
+    background: var(--color-dark);
+    position: relative;
+    overflow: hidden;
+    border-radius: 0;
+}
+
+/* Header styling */
+.cyberHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    background: var(--color-darker);
+    border-bottom: var(--border-glow);
+    margin: 0;
+    box-shadow: var(--shadow-sm);
+}
+
+.gridBackground {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: 
+        linear-gradient(to right, rgba(0, 150, 255, 0.05) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(0, 150, 255, 0.05) 1px, transparent 1px);
+    background-size: 30px 30px;
+    opacity: 0.3;
+    z-index: -1;
+}
+
+.title {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: var(--color-blue-bright);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    text-shadow: 0 0 8px var(--color-blue-glow);
+}
+
+.brainIcon {
+    width: 20px;
+    height: 20px;
+    fill: var(--color-blue-bright);
+    animation: pulse 4s infinite;
+}
+
+/* System panel - control area */
+.systemPanel {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.8rem 1.2rem;
+    background: rgba(0, 20, 40, 0.4);
+    position: relative;
+    overflow: hidden;
+    border-bottom: var(--border-glow);
+    border-top: none;
+    margin-bottom: 0;
+    z-index: 10;
+}
+
+.systemPanel::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(125deg, 
+        rgba(0, 150, 255, 0.1) 0%, 
+        rgba(0, 150, 255, 0) 70%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+.inputGroup {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+}
+
+.input {
+    background: rgba(0, 10, 20, 0.7);
+    border: 1px solid rgba(0, 150, 255, 0.3);
+    color: var(--color-text);
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    outline: none;
+    transition: all 0.2s ease;
+    font-family: var(--font-body);
+    box-shadow: 0 0 5px rgba(0, 150, 255, 0.1);
+}
+
+.input:focus {
+    border-color: var(--color-blue-primary);
+    box-shadow: 0 0 10px rgba(0, 150, 255, 0.3);
+}
+
+.input::placeholder {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.toggleGroup {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.toggleRow {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.toggle {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 0.3rem 0.8rem;
+    background: rgba(0, 20, 40, 0.7);
+    border-radius: 3px;
+    border: 1px solid rgba(0, 150, 255, 0.3);
+    transition: all 0.2s ease;
+    box-shadow: 0 0 5px rgba(0, 150, 255, 0.1);
+}
+
+.toggle:hover {
+    border-color: var(--color-blue-primary);
+    box-shadow: 0 0 10px rgba(0, 150, 255, 0.3);
+}
+
+.toggleLabel {
+    margin-left: 0.5rem;
+    font-size: 0.8rem;
+    color: var(--color-text);
+    opacity: 0.9;
+    letter-spacing: 0.5px;
+}
+
+.toggle input[type="checkbox"] {
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    background: rgba(0, 30, 60, 0.7);
+    border: 1px solid rgba(0, 150, 255, 0.5);
+    position: relative;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.toggle input[type="checkbox"]:checked {
+    background: var(--color-blue-primary);
+}
+
+.toggle input[type="checkbox"]:checked::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 5px;
+    width: 4px;
+    height: 8px;
+    border: solid white;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+.modelSelect {
+    background: rgba(0, 10, 20, 0.7);
+    border: 1px solid rgba(0, 150, 255, 0.3);
+    color: var(--color-text);
+    padding: 0.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 180px;
+    z-index: 20;
+}
+
+.modelSelect:focus {
+    border-color: var(--color-blue-primary);
+    box-shadow: 0 0 10px rgba(0, 150, 255, 0.3);
+    outline: none;
+}
+
+/* Messages area */
+.messagesContainer {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    position: relative;
+    background: linear-gradient(to bottom, 
+        rgba(0, 30, 60, 0.05) 0%,
+        rgba(0, 20, 40, 0.2) 100%);
+}
+
+.messagesContainer::-webkit-scrollbar {
+    width: 6px;
+}
+
+.messagesContainer::-webkit-scrollbar-track {
+    background: rgba(0, 20, 40, 0.3);
+}
+
+.messagesContainer::-webkit-scrollbar-thumb {
+    background: rgba(0, 100, 200, 0.5);
+    border-radius: 3px;
+}
+
+.messagesContainer::-webkit-scrollbar-thumb:hover {
+    background: var(--color-blue-primary);
+}
+
+.messageRow {
+    display: flex;
+    flex-direction: column;
+    max-width: 85%;
+    position: relative;
+    animation: fadeIn 0.3s ease;
+}
+
+.messageRow.user {
+    align-self: flex-end;
+}
+
+.messageRow.assistant {
+    align-self: flex-start;
+}
+
+.messageRow.pending {
+    opacity: 0.7;
+}
+
+.messageContent {
+    padding: 1rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    font-size: 0.95rem;
+    line-height: 1.5;
+    position: relative;
+    z-index: 1;
+}
+
+.messageContent.user {
+    background: linear-gradient(135deg, rgba(0, 55, 110, 0.7) 0%, rgba(0, 35, 70, 0.7) 100%);
+    border: 1px solid rgba(0, 170, 255, 0.3);
+    color: #fff;
+    text-align: right;
+}
+
+.messageContent.assistant {
+    background: linear-gradient(135deg, rgba(10, 25, 45, 0.7) 0%, rgba(5, 15, 30, 0.7) 100%);
+    border: 1px solid rgba(0, 150, 255, 0.2);
+    color: var(--color-text);
+}
+
+.messageTime {
+    font-size: 0.7rem;
+    color: rgba(255, 255, 255, 0.6);
+    margin-top: 0.3rem;
+    align-self: flex-end;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.typingIndicator {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0.5rem 1rem;
+}
+
+.typingDot {
+    width: 6px;
+    height: 6px;
+    background-color: var(--color-blue-primary);
+    border-radius: 50%;
+    animation: typing 1.4s infinite;
+}
+
+.typingDot:nth-child(1) { animation-delay: 0s; }
+.typingDot:nth-child(2) { animation-delay: 0.2s; }
+.typingDot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typing {
+    0%, 100% { transform: translateY(0); opacity: 0.5; }
+    50% { transform: translateY(-5px); opacity: 1; }
+}
+
+/* Source citation styling */
+.sourcesContainer {
+    margin-top: 0.5rem;
+    font-size: 0.8rem;
+}
+
+.sourcesToggle {
+    background: none;
+    border: none;
+    color: var(--color-blue-primary);
+    font-size: 0.8rem;
+    cursor: pointer;
+    text-decoration: underline;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    transition: all 0.2s ease;
+}
+
+.sourcesToggle:hover {
+    color: var(--color-blue-bright);
+    text-shadow: 0 0 5px rgba(0, 150, 255, 0.5);
+}
+
+.sourcesBadge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    background: var(--color-blue-primary);
+    color: #000;
+    border-radius: 10px;
+    padding: 0.1rem 0.4rem;
+    font-weight: bold;
+    margin-left: 0.3rem;
+}
+
+.sourcesList {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+    margin-top: 0.5rem;
+}
+
+.sourcesList.expanded {
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+.sourceItem {
+    background: rgba(0, 20, 40, 0.3);
+    border-left: 2px solid var(--color-blue-primary);
+    padding: 0.5rem 0.8rem;
+    margin: 0.3rem 0;
+    border-radius: 0 4px 4px 0;
+    font-size: 0.85rem;
+    color: var(--color-text);
+    opacity: 0.9;
+    transition: all 0.2s ease;
+}
+
+.sourceItem:hover {
+    background: rgba(0, 50, 100, 0.3);
+    border-left-color: var(--color-blue-bright);
+}
+
+/* Chat input form */
+.inputForm {
+    padding: 1rem;
+    background: var(--color-darker);
+    border-top: var(--border-glow);
+    display: flex;
+    gap: 0.8rem;
+    align-items: center;
+}
+
+.queryInput {
+    flex: 1;
+    background: rgba(0, 20, 40, 0.7);
+    border: 1px solid rgba(0, 150, 255, 0.3);
+    color: var(--color-text);
+    padding: 0.8rem 1rem;
+    border-radius: 4px;
+    font-family: var(--font-body);
+    font-size: 0.95rem;
+    outline: none;
+    resize: none;
+    min-height: 50px;
+    transition: all 0.2s ease;
+    box-shadow: 0 0 5px rgba(0, 150, 255, 0.1) inset;
+}
+
+.queryInput:focus {
+    border-color: var(--color-blue-primary);
+    box-shadow: 0 0 10px rgba(0, 150, 255, 0.3) inset;
+}
+
+.queryInput::placeholder {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.sendButton {
+    background: linear-gradient(135deg, var(--color-blue-primary) 0%, var(--color-blue-dark) 100%);
+    color: #fff;
+    border: none;
+    min-width: 60px;
+    height: 50px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 0 15px rgba(0, 150, 255, 0.3);
+    position: relative;
+    overflow: hidden;
+    padding: 0 1rem;
+    font-family: var(--font-heading);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.sendButton:hover {
+    background: linear-gradient(135deg, var(--color-blue-bright) 0%, var(--color-blue-primary) 100%);
+    box-shadow: 0 0 20px rgba(0, 150, 255, 0.6);
+}
+
+.sendButton:active {
+    transform: scale(0.95);
+}
+
+.sendButton:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.errorMessage {
+    background: rgba(255, 50, 50, 0.1);
+    border: 1px solid rgba(255, 50, 50, 0.3);
+    color: #ff5050;
+    padding: 0.8rem 1.2rem;
+    border-radius: 4px;
+    margin: 1rem;
+    animation: fadeIn 0.3s ease;
+    text-align: center;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 768px) {
+    .systemPanel {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.8rem;
+        padding: 1rem;
+    }
+
+    .toggleGroup {
+        flex-wrap: wrap;
+        gap: 0.8rem;
+        width: 100%;
+    }
+    
+    .toggle, .filterButton {
+        flex: 1;
+        min-width: 120px;
+        justify-content: center;
+    }
+
+    .messageContent {
+        max-width: 100%;
+        padding: 0.8rem;
+    }
+    
+    .inputForm {
+        padding: 0.8rem;
+    }
+}
+
+/* Header actions and history panel */
+.headerActions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.historyButton,
+.newChatButton {
+    background: rgba(0, 30, 60, 0.7);
+    border: 1px solid rgba(0, 150, 255, 0.3);
+    color: var(--color-blue-primary);
+    width: 36px;
+    height: 36px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.historyButton:hover,
+.newChatButton:hover {
+    background: rgba(0, 50, 100, 0.7);
+    border-color: var(--color-blue-bright);
+    color: var(--color-blue-bright);
+    transform: translateY(-2px);
+    box-shadow: 0 0 10px rgba(0, 150, 255, 0.3);
+}
+
+.historyPanel {
+    position: absolute;
+    top: 70px;
+    left: 1rem;
+    width: 320px;
+    max-height: 70vh;
+    background: rgba(0, 15, 30, 0.95);
+    border: 1px solid rgba(0, 150, 255, 0.3);
+    border-radius: 8px;
+    z-index: 100;
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.5), 0 0 15px rgba(0, 150, 255, 0.3);
+    display: flex;
+    flex-direction: column;
+    animation: slideIn 0.2s ease-out;
+    overflow: hidden;
+}
+
+.historyHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid rgba(0, 150, 255, 0.2);
+}
+
+.historyHeader h3 {
+    margin: 0;
+    color: var(--color-blue-bright);
+    font-size: 1.1rem;
+    font-family: var(--font-heading);
+    letter-spacing: 1px;
+}
+
+.closeButton {
+    background: transparent;
+    border: none;
+    color: var(--color-text);
+    font-size: 1.5rem;
+    cursor: pointer;
+    line-height: 1;
+    opacity: 0.7;
+    transition: all 0.15s ease;
+}
+
+.closeButton:hover {
+    opacity: 1;
+    color: var(--color-blue-bright);
+}
+
+.historyList {
+    overflow-y: auto;
+    max-height: calc(70vh - 50px);
+    padding: 0.5rem;
+}
+
+.historyItem {
+    padding: 0.8rem 1rem;
+    margin-bottom: 0.5rem;
+    background: rgba(0, 30, 60, 0.3);
+    border: 1px solid rgba(0, 150, 255, 0.15);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.historyItem:hover {
+    background: rgba(0, 40, 80, 0.4);
+    border-color: rgba(0, 150, 255, 0.3);
+    transform: translateY(-2px);
+}
+
+.historyItem.active {
+    background: rgba(0, 60, 120, 0.4);
+    border-color: var(--color-blue-primary);
+    box-shadow: 0 0 10px rgba(0, 150, 255, 0.2);
+}
+
+.historyTitle {
+    color: var(--color-text);
+    font-weight: 500;
+    margin-bottom: 0.4rem;
+    font-size: 0.95rem;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.historyMeta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.8rem;
+}
+
+.historyDate {
+    color: var(--color-blue-primary);
+    opacity: 0.8;
+}
+
+.historyDeleteButton {
+    background: transparent;
+    border: none;
+    color: rgba(255, 100, 100, 0.7);
+    padding: 4px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.historyDeleteButton:hover {
+    background: rgba(255, 50, 50, 0.1);
+    color: rgb(255, 80, 80);
+}
+
+.noHistory {
+    padding: 1.5rem;
+    text-align: center;
+    color: var(--color-light-gray);
+    font-style: italic;
+}
+
+@keyframes slideIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Make source items clickable */
+.sourceItem {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.sourceItem:hover {
+    background: rgba(0, 50, 100, 0.5);
+    transform: translateY(-2px);
+}
+
+/* Filter button styling */
+.filterButton {
+    display: flex;
+    align-items: center;
+    padding: 0.3rem 0.8rem;
+    background: rgba(0, 40, 80, 0.7);
+    border: 1px solid rgba(0, 150, 255, 0.4);
+    border-radius: 3px;
+    color: var(--color-blue-bright);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.8rem;
+    letter-spacing: 0.5px;
+    position: relative;
+    font-family: var(--font-heading);
+    text-transform: uppercase;
+}
+
+.filterButton:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: rgba(0, 20, 40, 0.7);
+    border-color: rgba(0, 150, 255, 0.2);
+    box-shadow: none;
+    transform: none;
+}
+
+.filterButton:hover:not(:disabled) {
+    background: rgba(0, 60, 120, 0.7);
+    border-color: var(--color-blue-bright);
+    transform: translateY(-2px);
+    box-shadow: 0 0 10px rgba(0, 150, 255, 0.3);
+}
+
+.filterButtonLabel {
+    margin-right: 0.4rem;
+}
+
+.filterBadgeCount {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    background: var(--color-blue-primary);
+    color: #000;
+    border-radius: 10px;
+    padding: 0.1rem 0.4rem;
+    font-weight: bold;
+    min-width: 1.5rem;
+}
+
+/* Modal styling */
+.modalOverlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 10, 20, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.2s ease;
+    backdrop-filter: blur(5px);
+}
+
+.filterModal {
+    width: 90%;
+    max-width: 700px;
+    background: rgba(0, 15, 30, 0.95);
+    border: 1px solid rgba(0, 150, 255, 0.3);
+    border-radius: 8px;
+    box-shadow: 0 0 30px rgba(0, 100, 255, 0.2), 0 0 60px rgba(0, 0, 0, 0.6);
+    overflow: hidden;
+    animation: zoomIn 0.3s ease;
+    height: 80vh;
+    min-height: 600px;
+    display: flex;
+    flex-direction: column;
+}
+
+.modalHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid rgba(0, 150, 255, 0.2);
+    background: rgba(0, 30, 60, 0.6);
+}
+
+.modalHeader h3 {
+    margin: 0;
+    font-size: 1.2rem;
+    color: var(--color-blue-bright);
+    font-family: var(--font-heading);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+.closeButton {
+    background: transparent;
+    border: none;
+    color: var(--color-text);
+    cursor: pointer;
+    line-height: 1;
+    opacity: 0.7;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+}
+
+.closeButton:hover {
+    opacity: 1;
+    color: var(--color-blue-bright);
+    transform: scale(1.1);
+}
+
+.modalContent {
+    padding: 1.5rem;
+    overflow-y: auto;
+    flex: 1;
+    height: calc(80vh - 70px);
+    min-height: 500px;
+}
+
+@keyframes zoomIn {
+    from { opacity: 0; transform: scale(0.9); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+/* Remove the old knowledgeFilterContainer styles */
+.knowledgeFilterContainer {
+    display: none; /* Hide instead of removing to prevent any layout issues */
+} 

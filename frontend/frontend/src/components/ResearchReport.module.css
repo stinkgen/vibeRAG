@@ -1,0 +1,357 @@
+.container {
+    height: 100%;
+    width: 100%;
+    padding: 1.5rem;
+    background-color: var(--color-dark);
+    position: relative;
+    overflow: auto;
+}
+
+/* Grid background */
+.gridBackground {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: 
+        linear-gradient(to right, rgba(0, 150, 255, 0.05) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(0, 150, 255, 0.05) 1px, transparent 1px);
+    background-size: 30px 30px;
+    opacity: 0.2;
+    z-index: -1;
+    pointer-events: none;
+}
+
+.cyberHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    background: var(--color-darker);
+    border-bottom: var(--border-glow);
+    margin-bottom: 2rem;
+    box-shadow: var(--shadow-sm);
+    position: relative;
+    border-radius: 4px;
+}
+
+.title {
+    font-size: 1.8rem;
+    color: var(--color-blue-bright);
+    margin: 0;
+    text-shadow: 0 0 10px var(--color-blue-glow);
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+}
+
+.researchIcon {
+    width: 24px;
+    height: 24px;
+    fill: var(--color-blue-bright);
+    animation: pulse 4s infinite;
+}
+
+/* Form controls */
+.form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    background: rgba(0, 20, 40, 0.2);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid rgba(0, 150, 255, 0.2);
+}
+
+.inputGroup {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.textarea {
+    background-color: rgba(0, 20, 40, 0.7);
+    border: 1px solid rgba(0, 150, 255, 0.3);
+    color: var(--color-text);
+    border-radius: 4px;
+    padding: 0.75rem;
+    font-family: var(--font-body);
+    font-size: 0.95rem;
+    resize: vertical;
+    min-height: 120px;
+    transition: all 0.2s ease;
+}
+
+.textarea:focus {
+    outline: none;
+    border-color: var(--color-blue-primary);
+    box-shadow: 0 0 10px rgba(0, 150, 255, 0.3);
+}
+
+.toggleGroup {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.toggle {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 0.5rem;
+    background: rgba(0, 20, 40, 0.7);
+    border-radius: 4px;
+    border: 1px solid rgba(0, 150, 255, 0.3);
+    transition: all 0.2s ease;
+}
+
+.toggle:hover {
+    background: rgba(0, 30, 60, 0.7);
+    border-color: var(--color-blue-primary);
+}
+
+.toggle input[type="checkbox"] {
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background: rgba(0, 30, 60, 0.7);
+    border: 1px solid rgba(0, 150, 255, 0.5);
+    border-radius: 3px;
+    margin-right: 0.5rem;
+    position: relative;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.toggle input[type="checkbox"]:checked {
+    background-color: var(--color-blue-primary);
+}
+
+.toggle input[type="checkbox"]:checked::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 5px;
+    width: 4px;
+    height: 8px;
+    border: solid white;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+.toggleLabel {
+    font-size: 0.9rem;
+    color: var(--color-text);
+}
+
+.button {
+    padding: 0.75rem 1.5rem;
+    background: linear-gradient(135deg, var(--color-blue-primary) 0%, var(--color-blue-dark) 100%);
+    color: var(--color-text);
+    border: none;
+    border-radius: 4px;
+    font-size: 1rem;
+    font-family: var(--font-heading);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 0 15px rgba(0, 150, 255, 0.3);
+}
+
+.button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0 20px rgba(0, 150, 255, 0.5);
+}
+
+.button:disabled {
+    background: var(--color-gray);
+    cursor: not-allowed;
+    transform: none;
+    opacity: 0.7;
+}
+
+.error {
+    background: rgba(255, 50, 50, 0.1);
+    border: 1px solid rgba(255, 50, 50, 0.3);
+    color: #ff5050;
+    padding: 0.8rem 1.2rem;
+    border-radius: 4px;
+    margin-bottom: 1.5rem;
+    animation: fadeIn 0.3s ease;
+}
+
+/* Report styling */
+.report {
+    background: rgba(0, 20, 40, 0.2);
+    border-radius: 8px;
+    border: 1px solid rgba(0, 150, 255, 0.2);
+    padding: 1.5rem;
+    animation: fadeIn 0.5s ease;
+}
+
+.reportTitle {
+    font-size: 1.8rem;
+    color: var(--color-blue-bright);
+    margin-bottom: 1.5rem;
+    text-shadow: 0 0 10px var(--color-blue-glow);
+    text-align: center;
+    font-family: var(--font-heading);
+    letter-spacing: 1px;
+    border-bottom: 1px solid rgba(0, 150, 255, 0.3);
+    padding-bottom: 1rem;
+}
+
+.section {
+    margin-bottom: 2rem;
+}
+
+.section h2 {
+    font-size: 1.4rem;
+    color: var(--color-blue-primary);
+    margin-bottom: 1rem;
+    font-family: var(--font-heading);
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+}
+
+.section h2::before {
+    content: '';
+    width: 4px;
+    height: 20px;
+    background: var(--color-blue-primary);
+    margin-right: 0.5rem;
+    border-radius: 2px;
+    box-shadow: 0 0 8px var(--color-blue-glow);
+}
+
+.content {
+    line-height: 1.6;
+}
+
+.content p {
+    margin-bottom: 1rem;
+    color: var(--color-text);
+    text-align: justify;
+}
+
+.insights {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.insights li {
+    position: relative;
+    padding: 0.8rem 1rem 0.8rem 3rem;
+    background: rgba(0, 30, 60, 0.3);
+    border-radius: 4px;
+    border-left: 3px solid var(--color-blue-primary);
+    color: var(--color-text);
+}
+
+.insightNumber {
+    position: absolute;
+    left: 1rem;
+    top: 0.8rem;
+    width: 24px;
+    height: 24px;
+    background: var(--color-blue-primary);
+    color: #000;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 0.8rem;
+    box-shadow: 0 0 8px rgba(0, 150, 255, 0.5);
+}
+
+.analysis {
+    line-height: 1.6;
+    color: var(--color-text);
+}
+
+.analysis p {
+    margin-bottom: 1rem;
+    text-align: justify;
+}
+
+.sources {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.sourceLink {
+    background: rgba(0, 10, 20, 0.7);
+    border: 1px solid rgba(0, 150, 255, 0.2);
+    color: var(--color-text);
+    padding: 0.5rem 0.8rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: left;
+}
+
+.sourceLink:hover {
+    background: rgba(0, 30, 60, 0.7);
+    border-color: var(--color-blue-primary);
+    color: var(--color-blue-bright);
+    transform: translateY(-2px);
+    box-shadow: 0 0 10px rgba(0, 150, 255, 0.3);
+}
+
+.sourceNote {
+    color: var(--color-blue-primary);
+    font-size: 0.9rem;
+    margin-bottom: 1rem;
+    text-align: center;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.7; }
+    100% { opacity: 1; }
+}
+
+@media (max-width: 768px) {
+    .container {
+        padding: 1rem;
+    }
+    
+    .form, .report {
+        padding: 1rem;
+    }
+    
+    .reportTitle {
+        font-size: 1.5rem;
+    }
+    
+    .section h2 {
+        font-size: 1.2rem;
+    }
+    
+    .insights li {
+        padding-left: 2.5rem;
+    }
+    
+    .insightNumber {
+        left: 0.5rem;
+    }
+} 
