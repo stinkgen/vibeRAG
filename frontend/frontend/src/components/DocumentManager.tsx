@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import styles from './DocumentManager.module.css';
+import API_ENDPOINTS from '../config/api';
 
 // Doc management types—keeping it organized!
 interface DocInfo {
@@ -31,6 +32,12 @@ const DocumentIcon = () => (
         />
     </svg>
 );
+
+// Helper function to truncate long strings
+const truncateString = (str: string, maxLength: number): string => {
+    if (str.length <= maxLength) return str;
+    return str.substring(0, maxLength - 3) + '...';
+};
 
 const DocumentManager: React.FC = () => {
     // State management vibes
@@ -63,7 +70,7 @@ const DocumentManager: React.FC = () => {
     // Fetch all docs from the backend
     const fetchDocs = async () => {
         try {
-            const response = await axios.get('http://localhost:8000/list');
+            const response = await axios.get(API_ENDPOINTS.LIST_DOCUMENTS);
             // Ensure we're getting an array
             const docsData = Array.isArray(response.data) ? response.data : [];
             setDocs(docsData);
@@ -138,7 +145,7 @@ const DocumentManager: React.FC = () => {
         formData.append('metadata', JSON.stringify(metadata));
 
         try {
-            const response = await axios.post<UploadResponse>('http://localhost:8000/upload', formData);
+            const response = await axios.post<UploadResponse>(API_ENDPOINTS.UPLOAD, formData);
             console.log('Upload complete—doc vibes strong! 📂');
             
             // Set success message with chunk count
@@ -172,7 +179,7 @@ const DocumentManager: React.FC = () => {
         }
 
         try {
-            await axios.delete(`http://localhost:8000/doc/${docId}`);
+            await axios.delete(API_ENDPOINTS.DELETE_DOCUMENT(docId));
             console.log('Doc deleted—cleanup complete! 🧹');
             fetchDocs();
         } catch (error) {
@@ -252,11 +259,12 @@ const DocumentManager: React.FC = () => {
                         <div className={styles.docHeader}>
                             <h3 className={styles.docTitle}>
                                 <a
-                                    href={`http://localhost:8000/get_pdf/${doc.filename}`}
+                                    href={API_ENDPOINTS.GET_DOCUMENT(doc.filename)}
                                     target="_blank"
                                     rel="noopener noreferrer"
+                                    className={styles.documentLink}
                                 >
-                                    {doc.filename}
+                                    {truncateString(doc.filename, 25)}
                                 </a>
                             </h3>
                             <button

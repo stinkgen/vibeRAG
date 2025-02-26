@@ -1,23 +1,23 @@
 # VibeRAG Configuration
 
 chat:
-  model: "gpt-4"
-  provider: "openai"
-  temperature: 0.7
-  chunks_limit: 10
-  ollama_url: "http://localhost:11434"
+  model: ${CHAT_MODEL:-gpt-4}
+  provider: ${CHAT_PROVIDER:-openai}
+  temperature: ${CHAT_TEMPERATURE:-0.7}
+  chunks_limit: ${CHAT_CHUNKS_LIMIT:-10}
+  ollama_url: ${OLLAMA_HOST:-http://localhost:11434}
 
 presentation:
-  model: "gpt-4"
-  provider: "openai"
-  temperature: 0.7
-  chunks_limit: 10
+  model: ${CHAT_MODEL:-gpt-4}
+  provider: ${CHAT_PROVIDER:-openai}
+  temperature: ${CHAT_TEMPERATURE:-0.7}
+  chunks_limit: ${CHAT_CHUNKS_LIMIT:-10}
 
 research:
-  model: "gpt-4"
-  provider: "openai"
-  temperature: 0.5
-  chunks_limit: 10
+  model: ${CHAT_MODEL:-gpt-4}
+  provider: ${CHAT_PROVIDER:-openai}
+  temperature: ${CHAT_TEMPERATURE:-0.5}
+  chunks_limit: ${CHAT_CHUNKS_LIMIT:-10}
 
 web_search:
   limit: 3
@@ -32,11 +32,11 @@ ingestion:
   overlap: 50      # Overlap between chunks
 
 milvus:
-  collection_name: "vibe_chunks"
+  collection_name: ${MILVUS_COLLECTION:-vibe_chunks}
   embedding_dim: 384  # all-MiniLM-L6-v2's dimension
   default_batch_size: 100
-  host: "localhost"
-  port: 19530
+  host: ${MILVUS_HOST:-localhost}
+  port: ${MILVUS_PORT:-19530}
   index_params:
     metric_type: "L2"
     index_type: "IVF_FLAT"

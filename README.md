@@ -41,30 +41,38 @@ VibeRAG combines the power of vector databases, LLMs, and semantic search to pro
    cd vibeRAG
    ```
 
-2. Create environment file from template:
+2. Run the setup script to configure your environment:
+   ```bash
+   ./setup_env.sh
+   ```
+   
+   This interactive script will:
+   - Create an `.env.local` file from the template
+   - Prompt you for API keys and configuration values
+   - Set up the frontend environment files
+   
+   If you prefer manual setup, you can copy the template and edit it yourself:
    ```bash
    cp .env.example .env.local
    ```
 
-3. Edit `.env.local` to add your API keys.
-
-4. Start Milvus with Docker Compose:
+3. Start Milvus with Docker Compose:
    ```bash
    docker-compose up -d
    ```
 
-5. Install Python dependencies:
+4. Install Python dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-6. Start the backend:
+5. Start the backend:
    ```bash
    cd frontend/backend
    uvicorn app:app --reload
    ```
 
-7. In another terminal, install frontend dependencies:
+6. In another terminal, install frontend dependencies:
    ```bash
    cd frontend/frontend
    npm install
@@ -100,9 +108,18 @@ VibeRAG combines the power of vector databases, LLMs, and semantic search to pro
 
 ## Configuration
 
-See `.env.example` for available configuration options.
+The project now uses environment variables for all configuration. Key files:
 
-The `config/config.yaml` file contains additional system settings.
+- `.env.local`: Main configuration file (created by setup script)
+- `.env.example`: Template with all available options
+- `frontend/.env`: Frontend environment variables (auto-generated)
+- `config/config.yaml`: Additional system settings
+
+Available configuration options include:
+- API keys for OpenAI and Google Search
+- Server host/port settings
+- Database connection parameters
+- Model selection and parameters
 
 ## Project Structure
 
@@ -154,4 +171,4 @@ MIT
 
 - This project uses [Milvus](https://milvus.io/) for vector storage
 - UI inspired by cyberpunk aesthetics
-- Built with FastAPI and React 
+- Built with FastAPI and React

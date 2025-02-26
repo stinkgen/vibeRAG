@@ -11,7 +11,7 @@ services:
       - ETCD_SNAPSHOT_COUNT=50000
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/etcd:/etcd
-    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:${ETCD_PORT:-2379} -listen-client-urls http://0.0.0.0:${ETCD_PORT:-2379} --data-dir /etcd
     healthcheck:
       test: ["CMD", "etcdctl", "endpoint", "health"]
       interval: 30s
@@ -28,7 +28,7 @@ services:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio:/minio_data
     command: minio server /minio_data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:${MINIO_PORT:-9000}/minio/health/live"]
       interval: 30s
       timeout: 20s
       retries: 3
@@ -38,13 +38,13 @@ services:
     image: milvusdb/milvus:v2.3.3
     command: ["milvus", "run", "standalone"]
     environment:
-      ETCD_ENDPOINTS: etcd:2379
-      MINIO_ADDRESS: minio:9000
+      ETCD_ENDPOINTS: etcd:${ETCD_PORT:-2379}
+      MINIO_ADDRESS: minio:${MINIO_PORT:-9000}
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/milvus:/var/lib/milvus
     ports:
-      - "19530:19530"
-      - "9091:9091"
+      - "${MILVUS_API_PORT:-19530}:19530"
+      - "${MILVUS_METRICS_PORT:-9091}:9091"
     depends_on:
       - "etcd"
       - "minio"

@@ -827,14 +827,18 @@ if __name__ == "__main__":
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             return s.connect_ex(('127.0.0.1', port)) == 0
     
-    # Check if port 8000 is available, otherwise use 8001
-    port = 8000
-    if is_port_in_use(port):
-        logger.warning(f"Port {port} is already in use. Trying port 8001...")
-        port = 8001
-        if is_port_in_use(port):
-            logger.warning(f"Port {port} is also in use. Trying port 8002...")
-            port = 8002
+    # Get host and port from environment variables or use defaults
+    host = os.getenv("BACKEND_HOST", "0.0.0.0")
+    default_port = int(os.getenv("BACKEND_PORT", "8000"))
     
-    logger.info(f"Starting server on port {port}...")
-    uvicorn.run(app, host="0.0.0.0", port=port) 
+    # Check if the configured port is available, otherwise increment
+    port = default_port
+    if is_port_in_use(port):
+        logger.warning(f"Port {port} is already in use. Trying port {port+1}...")
+        port = port + 1
+        if is_port_in_use(port):
+            logger.warning(f"Port {port} is also in use. Trying port {port+1}...")
+            port = port + 1
+    
+    logger.info(f"Starting server on {host}:{port}...")
+    uvicorn.run(app, host=host, port=port) 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import styles from './KnowledgeFilter.module.css';
+import API_ENDPOINTS from '../config/api';
 
 interface FilterOption {
   id: string;
@@ -33,16 +34,12 @@ const KnowledgeFilter: React.FC<KnowledgeFilterProps> = ({ onFilterChange, initi
       setLoading(true);
       try {
         let endpoint = '';
-        switch (filterType) {
-          case 'file':
-            endpoint = '/api/documents';
-            break;
-          case 'collection':
-            endpoint = '/api/collections';
-            break;
-          case 'tag':
-            endpoint = '/api/tags';
-            break;
+        if (filterType === 'file') {
+          endpoint = API_ENDPOINTS.DOCUMENTS;
+        } else if (filterType === 'collection') {
+          endpoint = API_ENDPOINTS.COLLECTIONS;
+        } else if (filterType === 'tag') {
+          endpoint = API_ENDPOINTS.TAGS;
         }
         
         const response = await fetch(endpoint);

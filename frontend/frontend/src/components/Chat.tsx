@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import styles from './Chat.module.css';
 import KnowledgeFilter from './KnowledgeFilter';
+import API_ENDPOINTS from '../config/api';
 
 // Brain SVG component - keeping it raw and minimal
 const BrainIcon = () => (
@@ -445,7 +446,7 @@ const Chat: React.FC = () => {
   useEffect(() => {
     const fetchConfig = async () => {
       try {
-        const { data } = await axios.get('http://localhost:8000/api/config');
+        const { data } = await axios.get(API_ENDPOINTS.CONFIG);
         // Only update if we don't have a saved config
         if (!config.chat.model || !config.chat.provider) {
           setConfig(data as ConfigState);
@@ -540,15 +541,15 @@ const Chat: React.FC = () => {
     console.log("Added user message and pending assistant message");
     
     // Build URL with query params
-    const params = new URLSearchParams();
-    params.append('query', query);
-    if (filename) params.append('filename', filename);
-    params.append('knowledge_only', knowledgeOnly.toString());
-    params.append('use_web', useWeb.toString());
-    params.append('stream', 'true');
-    params.append('provider', config.chat.provider);
-    params.append('model', config.chat.model);
-    params.append('system_prompt', SYSTEM_PROMPT);
+    const params = new URLSearchParams({
+      query: query,
+      knowledge_only: knowledgeOnly.toString(),
+      use_web: useWeb.toString(),
+      stream: 'true',
+      ...(config.chat.model ? { model: config.chat.model } : {}),
+      ...(config.chat.provider ? { provider: config.chat.provider } : {}),
+      ...(filename ? { filename: filename } : {})
+    });
     
     // Include full conversation context for better continuity - include the current user message
     const context = [
@@ -570,7 +571,7 @@ const Chat: React.FC = () => {
     // Add filter data to the URL
     params.append('filters', JSON.stringify(filterData));
     
-    const url = `http://localhost:8000/chat?${params.toString()}`;
+    const url = `${API_ENDPOINTS.CHAT}?${params.toString()}`;
     console.log(`Sending request to: ${url}`);
     
     // Clear the input after sending
@@ -930,33 +931,14 @@ const Chat: React.FC = () => {
     setQuery('');
     
     try {
-      // Prepare filter data
-      const filterData = {
-        files: knowledgeFilters.filter(f => f.type === 'file').map(f => f.id),
-        collections: knowledgeFilters.filter(f => f.type === 'collection').map(f => f.id),
-        tags: knowledgeFilters.filter(f => f.type === 'tag').map(f => f.id),
-      };
-      
-      // Include current context without the pending message
-      const context = [
-        ...messages.filter(msg => !msg.pending).map(msg => ({
-          role: msg.role,
-          content: msg.content
-        })),
-        { role: userMessage.role, content: userMessage.content }
-      ];
-      
-      const response = await axios.post<ChatResponse>('http://localhost:8000/chat', {
-        query,
-        filename: filename || undefined,
+      const response = await axios.post<ChatResponse>(API_ENDPOINTS.CHAT, {
+        query: query,
         knowledge_only: knowledgeOnly,
         use_web: useWeb,
         stream: false,
-        provider: config.chat.provider,
-        model: config.chat.model,
-        system_prompt: SYSTEM_PROMPT,
-        context,
-        filters: filterData
+        ...(config.chat.model ? { model: config.chat.model } : {}),
+        ...(config.chat.provider ? { provider: config.chat.provider } : {}),
+        ...(filename ? { filename: filename } : {})
       });
       
       const data = response.data;
@@ -1007,21 +989,11 @@ const Chat: React.FC = () => {
   };
 
   const handleSourceClick = (source: string) => {
-    // Extract filename from source (e.g., "Page 76 of whitepaper.pdf" -> "whitepaper.pdf")
-    const match = source.match(/of\s+([^,\s]+\.pdf)/i);
-    if (match) {
-      const pdfFilename = match[1];
-      // Open PDF in new tab
-      window.open(`http://localhost:8000/get_pdf/${pdfFilename}`, '_blank');
-      console.log('PDF vibes opening up! 📚');
-    } else if (source.startsWith('Web:')) {
-      // Extract URL from web source
-      const match = source.match(/\((https?:\/\/[^)]+)\)/);
-      if (match) {
-        window.open(match[1], '_blank');
-        console.log('Web vibes opening up! 🌐');
-      }
-    }
+    // Extract the filename from the source string
+    const pdfFilename = source.split('/').pop() || '';
+    
+    // Open the PDF in a new tab
+    window.open(`${API_ENDPOINTS.GET_DOCUMENT(pdfFilename)}`, '_blank');
   };
   
   const formatTimestamp = (date: Date) => {

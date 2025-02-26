@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import styles from './Config.module.css';
+import API_ENDPOINTS from '../config/api';
 
 interface ConfigState {
   chat: {
@@ -71,17 +72,18 @@ const Config: React.FC = () => {
   const [loadingOpenai, setLoadingOpenai] = useState(false);
   const [modelLoading, setModelLoading] = useState(false);
   const [modelLoadMessage, setModelLoadMessage] = useState('');
+  const [error, setError] = useState('');
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   useEffect(() => {
-    // Fetch current config
     const fetchConfig = async () => {
+      setLoading(true);
       try {
-        setLoading(true);
-        const response = await axios.get<ConfigState>('http://localhost:8000/api/config');
+        const response = await axios.get<ConfigState>(API_ENDPOINTS.CONFIG);
         setConfig(response.data);
       } catch (error) {
-        console.error('Failed to fetch config:', error);
-        setMessage('Failed to load configuration');
+        console.error('Failed to load config:', error);
+        setError('Failed to load configuration. Check server connection.');
       } finally {
         setLoading(false);
       }
@@ -90,18 +92,13 @@ const Config: React.FC = () => {
     fetchConfig();
   }, []);
 
-  // Check Ollama status when config is loaded or host changes
   useEffect(() => {
     const checkOllamaStatus = async () => {
       try {
-        setLoadingOllama(true);
-        const response = await axios.get<OllamaStatus>('http://localhost:8000/api/providers/ollama/status');
+        const response = await axios.get<OllamaStatus>(API_ENDPOINTS.OLLAMA_STATUS);
         setOllamaStatus(response.data);
       } catch (error) {
         console.error('Failed to check Ollama status:', error);
-        setOllamaStatus({ online: false, error: 'Failed to connect to Ollama', models: [] });
-      } finally {
-        setLoadingOllama(false);
       }
     };
 
@@ -110,40 +107,28 @@ const Config: React.FC = () => {
     }
   }, [config.ollama.host]);
 
-  // Fetch OpenAI models when API key is set
-  useEffect(() => {
-    const fetchOpenAIModels = async () => {
-      try {
-        setLoadingOpenai(true);
-        const response = await axios.get<OpenAIModelsResponse>('http://localhost:8000/api/providers/openai/models');
-        if (response.data.models) {
-          setOpenaiModels(response.data.models);
-        }
-      } catch (error) {
-        console.error('Failed to fetch OpenAI models:', error);
-      } finally {
-        setLoadingOpenai(false);
-      }
-    };
-
-    if (config.openai.api_key) {
-      fetchOpenAIModels();
+  const fetchOpenAIModels = async () => {
+    try {
+      const response = await axios.get<OpenAIModelsResponse>(API_ENDPOINTS.OPENAI_MODELS);
+      setOpenaiModels(response.data.models);
+    } catch (error) {
+      console.error('Failed to fetch OpenAI models:', error);
     }
-  }, [config.openai.api_key]);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoading(true);
     try {
-      setLoading(true);
-      await axios.post('http://localhost:8000/api/config', config);
+      await axios.post(API_ENDPOINTS.UPDATE_CONFIG, config);
       setMessage('Configuration saved successfully!');
       
       // Re-check Ollama status after saving config
-      const response = await axios.get<OllamaStatus>('http://localhost:8000/api/providers/ollama/status');
+      const response = await axios.get<OllamaStatus>(API_ENDPOINTS.OLLAMA_STATUS);
       setOllamaStatus(response.data);
     } catch (error) {
       console.error('Failed to save config:', error);
-      setMessage('Failed to save configuration');
+      setError('Failed to save configuration.');
     } finally {
       setLoading(false);
     }
@@ -159,33 +144,28 @@ const Config: React.FC = () => {
     });
   };
 
-  const loadOllamaModel = async (modelName: string) => {
+  const loadOllamaModel = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoadingOllama(true);
+    setModelLoadMessage('');
+    
+    const formData = new FormData();
+    formData.append('model_name', config.ollama.model);
+    
     try {
-      setModelLoading(true);
-      setModelLoadMessage(`Loading ${modelName}...`);
+      const response = await axios.post<OllamaLoadResponse>(API_ENDPOINTS.OLLAMA_LOAD, formData);
+      setModelLoadMessage(`Model ${config.ollama.model} load initiated: ${response.data.status}`);
       
-      const formData = new FormData();
-      formData.append('model_name', modelName);
-      
-      const response = await axios.post<OllamaLoadResponse>('http://localhost:8000/api/providers/ollama/load', formData);
-      
-      if (response.data.status === 'success') {
-        setModelLoadMessage(`${modelName} loaded successfully!`);
-        // Update config to use this model
-        handleChange('ollama', 'model', modelName);
-        handleChange('chat', 'model', modelName);
-        
-        // Refresh Ollama model list
-        const statusResponse = await axios.get<OllamaStatus>('http://localhost:8000/api/providers/ollama/status');
+      // Check updated status after load
+      setTimeout(async () => {
+        const statusResponse = await axios.get<OllamaStatus>(API_ENDPOINTS.OLLAMA_STATUS);
         setOllamaStatus(statusResponse.data);
-      } else {
-        setModelLoadMessage(`Failed to load ${modelName}: ${response.data.message}`);
-      }
+      }, 2000);
     } catch (error) {
       console.error('Failed to load Ollama model:', error);
-      setModelLoadMessage('Failed to load model');
+      setModelLoadMessage('Failed to load model. Ensure Ollama is running and model name is correct.');
     } finally {
-      setModelLoading(false);
+      setLoadingOllama(false);
     }
   };
 
@@ -347,7 +327,7 @@ const Config: React.FC = () => {
                       {model !== config.ollama.model && (
                         <button 
                           type="button" 
-                          onClick={() => loadOllamaModel(model)}
+                          onClick={loadOllamaModel}
                           disabled={modelLoading}
                           className={styles.useModelButton}
                         >
@@ -367,32 +347,6 @@ const Config: React.FC = () => {
                 {modelLoadMessage}
               </div>
             )}
-            
-            <div className={styles.inputGroup}>
-              <label>Load New Model</label>
-              <div className={styles.loadModelGroup}>
-                <input 
-                  type="text"
-                  placeholder="Model name (e.g., llama3)"
-                  className={styles.loadModelInput}
-                  id="new-model-name"
-                />
-                <button 
-                  type="button" 
-                  onClick={() => {
-                    const modelNameInput = document.getElementById('new-model-name') as HTMLInputElement;
-                    if (modelNameInput && modelNameInput.value) {
-                      loadOllamaModel(modelNameInput.value);
-                      modelNameInput.value = '';
-                    }
-                  }}
-                  disabled={modelLoading || !ollamaStatus.online}
-                  className={styles.loadModelButton}
-                >
-                  {modelLoading ? 'Loading...' : 'Load'}
-                </button>
-              </div>
-            </div>
           </div>
         </div>
         

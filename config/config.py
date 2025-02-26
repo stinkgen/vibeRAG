@@ -2,6 +2,10 @@ from dataclasses import dataclass, field
 import torch
 from typing import Dict, Any
 import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 @dataclass
 class SearchConfig:
@@ -10,10 +14,10 @@ class SearchConfig:
 
 @dataclass
 class ResearchConfig:
-    chunks_limit: int = 10
-    model: str = "gpt-4"
-    provider: str = "openai"
-    temperature: float = 0.7
+    chunks_limit: int = int(os.getenv("CHAT_CHUNKS_LIMIT", "10"))
+    model: str = os.getenv("CHAT_MODEL", "gpt-4")
+    provider: str = os.getenv("CHAT_PROVIDER", "openai")
+    temperature: float = float(os.getenv("CHAT_TEMPERATURE", "0.7"))
 
 @dataclass
 class WebSearchConfig:
@@ -22,11 +26,11 @@ class WebSearchConfig:
 @dataclass
 class MilvusConfig:
     """Configuration for Milvus vector store."""
-    host: str = "localhost"  # Milvus server host
-    port: int = 19530  # Milvus server port
+    host: str = os.getenv("MILVUS_HOST", "localhost")  # Milvus server host
+    port: int = int(os.getenv("MILVUS_PORT", "19530"))  # Milvus server port
     dim: int = 384  # Embedding dimension
     embedding_dim: int = 384  # Alias for dim to maintain compatibility
-    collection_name: str = "documents"  # Collection name
+    collection_name: str = os.getenv("MILVUS_COLLECTION", "documents")  # Collection name
     index_type: str = "HNSW"  # Index type
     metric_type: str = "L2"  # Distance metric
     default_batch_size: int = 100  # Default batch size for operations
@@ -74,18 +78,18 @@ class MilvusConfig:
 
 @dataclass
 class OllamaConfig:
-    host: str = "http://localhost:11434"
-    model: str = "llama3"
+    host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    model: str = os.getenv("OLLAMA_MODEL", "llama3")
     chat_endpoint: str = "/api/chat"
     generate_endpoint: str = "/api/generate"
-    temperature: float = 0.7
+    temperature: float = float(os.getenv("CHAT_TEMPERATURE", "0.7"))
 
 @dataclass
 class ChatConfig:
-    model: str = "llama3"
-    provider: str = "ollama"
-    temperature: float = 0.7
-    chunks_limit: int = 5  # Maximum number of chunks to retrieve for chat
+    model: str = os.getenv("CHAT_MODEL", "llama3")
+    provider: str = os.getenv("CHAT_PROVIDER", "ollama")
+    temperature: float = float(os.getenv("CHAT_TEMPERATURE", "0.7"))
+    chunks_limit: int = int(os.getenv("CHAT_CHUNKS_LIMIT", "5"))  # Maximum number of chunks to retrieve for chat
 
 @dataclass
 class EmbeddingConfig:
@@ -97,9 +101,9 @@ class EmbeddingConfig:
 @dataclass
 class OpenAIConfig:
     """Configuration for OpenAI API."""
-    api_key: str = ""  # Set via environment variable
-    base_url: str = "https://api.openai.com/v1"
-    default_model: str = "gpt-4"
+    api_key: str = os.getenv("OPENAI_API_KEY", "")  # Set via environment variable
+    base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    default_model: str = os.getenv("CHAT_MODEL", "gpt-4")
 
 @dataclass
 class IngestionConfig:
@@ -111,11 +115,11 @@ class IngestionConfig:
 @dataclass
 class PresentationConfig:
     """Configuration for presentation generation."""
-    chunks_limit: int = 10  # Maximum number of chunks to use
+    chunks_limit: int = int(os.getenv("CHAT_CHUNKS_LIMIT", "10"))  # Maximum number of chunks to use
     max_slides: int = 10  # Maximum number of slides
-    model: str = "gpt-4"  # Model to use for generation
-    provider: str = "openai"  # Provider to use (openai or ollama)
-    temperature: float = 0.7  # Temperature for generation
+    model: str = os.getenv("CHAT_MODEL", "gpt-4")  # Model to use for generation
+    provider: str = os.getenv("CHAT_PROVIDER", "openai")  # Provider to use (openai or ollama)
+    temperature: float = float(os.getenv("CHAT_TEMPERATURE", "0.7"))  # Temperature for generation
 
 @dataclass
 class Config:

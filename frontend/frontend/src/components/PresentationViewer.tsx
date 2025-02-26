@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import styles from './PresentationViewer.module.css';
 import { ModelSelector } from './ModelSelector';
+import API_ENDPOINTS from '../config/api';
 
 // Slide game strong—high-impact presentations!
 interface Slide {
@@ -31,23 +32,82 @@ const PresentationViewer: React.FC = () => {
         provider: 'openai',
         model: 'gpt-4',
     });
+    const [config, setConfig] = useState<any>(null);
+    const [error, setError] = useState('');
+    const [slides, setSlides] = useState<Slide[]>([]);
+    const [sources, setSources] = useState<string[]>([]);
+    const [currentSlide, setCurrentSlide] = useState(0);
+    const [downloading, setDownloading] = useState(false);
+    const [numSlides, setNumSlides] = useState(0);
 
-    // Fetch initial config
+    // Fetch config on mount
     useEffect(() => {
         const fetchConfig = async () => {
             try {
-                const response = await axios.get('http://localhost:8000/api/config');
-                const data = response.data as { chat: { provider: string; model: string } };
-                setModelConfig({
-                    provider: data.chat.provider, // Default to chat provider
-                    model: data.chat.model, // Default to chat model
-                });
+                const response = await axios.get(API_ENDPOINTS.CONFIG);
+                setConfig(response.data);
             } catch (error) {
                 console.error('Failed to fetch config:', error);
             }
         };
+        
         fetchConfig();
     }, []);
+
+    // Generate presentation slides
+    const generatePresentation = async () => {
+        if (!prompt.trim()) {
+            setError('Please enter a presentation topic');
+            return;
+        }
+        
+        setLoading(true);
+        setError('');
+        setSlides([]);
+        setSources([]);
+        
+        try {
+            const response = await axios.post(API_ENDPOINTS.PRESENTATION, {
+                prompt: prompt,
+                n_slides: numSlides,
+                model: config?.chat?.model || 'gpt-4',
+                provider: config?.chat?.provider || 'openai'
+            });
+            
+            const responseData = response.data as { 
+                slides: Slide[]; 
+                sources: string[];
+            };
+            
+            setSlides(responseData.slides);
+            setSources(responseData.sources);
+            setCurrentSlide(0);
+        } catch (error) {
+            console.error('Error generating presentation:', error);
+            setError('Failed to generate presentation. Please try again.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Download presentation as PDF
+    const downloadPDF = async () => {
+        setDownloading(true);
+        try {
+            // Generate unique filename
+            const filename = `presentation_${Date.now()}.pdf`;
+            
+            const response = await axios.get(`${API_ENDPOINTS.GET_DOCUMENT(filename)}`);
+            // Process the response...
+            
+            // Rest of the function
+        } catch (error) {
+            console.error('Error downloading presentation:', error);
+            setError('Failed to download presentation');
+        } finally {
+            setDownloading(false);
+        }
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();

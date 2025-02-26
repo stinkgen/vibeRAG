@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import styles from './ModelSelector.module.css';
+import API_ENDPOINTS from '../config/api';
 
 interface ModelSelectorProps {
   provider: string;
@@ -29,31 +30,29 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [openaiModels, setOpenaiModels] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatusResponse | null>(null);
 
   useEffect(() => {
-    const fetchModels = async () => {
-      setLoading(true);
+    const checkProviders = async () => {
+      // Check Ollama status
       try {
-        if (provider === 'ollama') {
-          const response = await axios.get<OllamaStatusResponse>('http://localhost:8000/api/providers/ollama/status');
-          if (response.data.models) {
-            setOllamaModels(response.data.models);
-          }
-        } else if (provider === 'openai') {
-          const response = await axios.get<OpenAIModelsResponse>('http://localhost:8000/api/providers/openai/models');
-          if (response.data.models) {
-            setOpenaiModels(response.data.models);
-          }
-        }
+        const response = await axios.get<OllamaStatusResponse>(API_ENDPOINTS.OLLAMA_STATUS);
+        setOllamaStatus(response.data);
       } catch (error) {
-        console.error('Failed to fetch models:', error);
-      } finally {
-        setLoading(false);
+        console.error('Failed to check Ollama status:', error);
+      }
+
+      // Check OpenAI models
+      try {
+        const response = await axios.get<OpenAIModelsResponse>(API_ENDPOINTS.OPENAI_MODELS);
+        setOpenaiModels(response.data.models || []);
+      } catch (error) {
+        console.error('Failed to get OpenAI models:', error);
       }
     };
 
-    fetchModels();
-  }, [provider]);
+    checkProviders();
+  }, []);
 
   return (
     <div className={styles.modelSelector}>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import styles from './ResearchReport.module.css';
+import API_ENDPOINTS from '../config/api';
 
 // Research vibes strong—knowledge report FTW!
 interface ResearchReport {
@@ -26,38 +27,30 @@ const ResearchReportViewer: React.FC = () => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setReport(null);
     
     try {
-      const { data } = await axios.post<ResearchResponse>('http://localhost:8000/research', {
-        query,
-        use_web: useWeb,
+      // Call research endpoint
+      const { data } = await axios.post<ResearchResponse>(API_ENDPOINTS.RESEARCH, {
+        query: query,
+        use_web: useWeb
       });
+      
       setReport(data.report);
-      console.log('Research crew dropped some heat! 🔬');
     } catch (error) {
-      console.error('Research request failed to vibe:', error);
-      setError('No report yet, brah—try again! 😅');
+      console.error('Research generation failed:', error);
+      setError('Failed to generate research report. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
   const handleSourceClick = (source: string) => {
-    // Extract filename from source (e.g., "Page 76 of whitepaper.pdf" -> "whitepaper.pdf")
-    const match = source.match(/of\s+([^,\s]+\.pdf)/i);
-    if (match) {
-      const pdfFilename = match[1];
-      // Open PDF in new tab
-      window.open(`http://localhost:8000/get_pdf/${pdfFilename}`, '_blank');
-      console.log('PDF vibes opening up! 📚');
-    } else if (source.startsWith('Web:')) {
-      // Extract URL from web source
-      const match = source.match(/\((https?:\/\/[^)]+)\)/);
-      if (match) {
-        window.open(match[1], '_blank');
-        console.log('Web vibes opening up! 🌐');
-      }
-    }
+    // Extract filename from source string
+    const pdfFilename = source.split('/').pop() || '';
+    
+    // Open the PDF in a new tab
+    window.open(API_ENDPOINTS.GET_DOCUMENT(pdfFilename), '_blank');
   };
 
   return (

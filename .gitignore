@@ -4,6 +4,11 @@
 .env
 .env.*
 !.env.example
+!.env.production
+frontend/**/.env
+frontend/**/.env.*
+!frontend/**/.env.example
+!frontend/**/.env.production
 secrets.json
 **/credentials/*
 **/firebase-config.*
@@ -11,6 +16,19 @@ secrets.json
 *.key
 *.pem
 *.cert
+
+# Temporary and test files
+test_*.py
+!tests/test_*.py
+check_*.py
+diagnose_*.py
+setup_test_*.py
+temp_*.py
+temp_*.txt
+**/server.log
+*_temp.*
+*_test.*
+debug_*.py
 
 # Personal data and files
 **/server.log
