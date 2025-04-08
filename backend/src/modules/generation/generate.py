@@ -13,8 +13,8 @@ import asyncio
 import os
 from openai import AsyncOpenAI
 
-from config.config import CONFIG
-from .exceptions import GenerationError
+from src.modules.config.config import CONFIG
+from src.modules.generation.exceptions import GenerationError
 
 # Configure logging
 logging.basicConfig(
@@ -188,8 +188,8 @@ async def chat_with_knowledge(
     model: str = CONFIG.chat.model,
     provider: ProviderType = CONFIG.chat.provider,
     temperature: float = CONFIG.chat.temperature
-) -> AsyncGenerator[str, None]:
-    """Chat with an LLM using knowledge from your docs.
+) -> AsyncGenerator[Dict[str, Any], None]:
+    """Chat with an LLM using knowledge from your docs, yielding structured events.
 
     Args:
         query: The user's question or prompt
@@ -200,76 +200,122 @@ async def chat_with_knowledge(
         provider: LLM provider
         temperature: Generation temperature
 
-    Returns:
-        AsyncGenerator yielding response chunks
+    Yields:
+        Dicts representing events: 
+        {'type': 'sources', 'data': [...]}
+        {'type': 'response', 'data': '...'}
+        {'type': 'error', 'data': '...'}
     """
-    from retrieval.search import semantic_search, google_search
+    from src.modules.retrieval.search import semantic_search, google_search
+    
+    logger.info(f"Starting chat_with_knowledge: query='{query[:50]}...', filename={filename}, use_web={use_web}")
 
-    # Get relevant chunks
-    chunks = semantic_search(query, top_k=CONFIG.chat.chunks_limit, filename=filename)
-    logger.info(f"Found {len(chunks)} relevant chunks")
-
-    # Add web results if requested
-    web_results = []
-    if use_web:
-        web_results = google_search(query)
-        logger.info(f"Found {len(web_results)} web results")
-
-    if not chunks and not web_results:
-        if knowledge_only:
-            logger.warning("No knowledge found and knowledge_only=True")
-            yield "I don't have any relevant information to answer your question."
+    try:
+        # 1. Get relevant chunks
+        try:
+            chunks = semantic_search(query, top_k=CONFIG.chat.chunks_limit, filename=filename)
+            logger.info(f"Found {len(chunks)} relevant chunks")
+        except Exception as e:
+            logger.error(f"Semantic search failed: {e}")
+            yield {"type": "error", "data": f"Failed to retrieve information: {e}"}
             return
 
-    # Format context
-    context_parts = []
-
-    # Add document chunks
-    for chunk in chunks:
-        text = chunk['text'].strip()
-        # Process metadata - it might be a string or a dict
-        metadata = chunk['metadata']
-        if isinstance(metadata, str):
+        # 2. Get web results if requested
+        web_results = []
+        if use_web:
             try:
-                metadata = json.loads(metadata)
-            except json.JSONDecodeError:
-                metadata = {"filename": "unknown file", "page": "?"}
-        
-        filename = metadata.get('filename', 'unknown file')
-        page = metadata.get('page', '?')
-        context_parts.append(f"From {filename} (page {page}):\n{text}")
+                web_results = google_search(query)
+                logger.info(f"Found {len(web_results)} web results")
+            except Exception as e:
+                logger.warning(f"Google search failed: {e}") # Log as warning, proceed without web results
+                # Optionally yield a warning to the client?
+                # yield {"type": "warning", "data": "Web search failed, proceeding without it."} 
 
-    # Add web results
-    if web_results:
+        # 3. Handle no context found
+        if not chunks and not web_results:
+            if knowledge_only:
+                logger.warning("No knowledge found and knowledge_only=True")
+                yield {"type": "error", "data": "I don't have any relevant information to answer your question based on the available documents."}
+                return
+            else:
+                logger.info("No context found, proceeding with query only.")
+                # Proceed without specific context
+
+        # 4. Extract and yield sources
+        sources_list = []
+        for chunk in chunks:
+            metadata = chunk.get("metadata", {})
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except json.JSONDecodeError:
+                    metadata = {}
+            source_filename = metadata.get('filename', 'unknown')
+            source_page = metadata.get('page', '?')
+            sources_list.append({"type": "document", "filename": source_filename, "page": source_page})
+
         for result in web_results:
-            context_parts.append(f"From {result['title']}:\n{result['snippet']}")
+             sources_list.append({"type": "web", "title": result.get('title', ''), "link": result.get('link', '')})
+        
+        if sources_list:
+            yield {"type": "sources", "data": sources_list}
 
-    context = "\n\n".join(context_parts)
+        # 5. Format context for LLM
+        context_parts = []
+        for i, chunk in enumerate(chunks):
+            text = chunk['text'].strip()
+            metadata = chunk.get("metadata", {})
+            if isinstance(metadata, str): # Redundant parsing, but keep for context string
+                try: metadata = json.loads(metadata)
+                except: metadata = {}
+            filename_ctx = metadata.get('filename', 'unknown file')
+            page_ctx = metadata.get('page', '?')
+            context_parts.append(f"Source {i+1} ({filename_ctx}, page {page_ctx}):\n{text}")
 
-    # Build messages for the LLM
-    messages = [
-        {
-            "role": "system",
-            "content": """You are a helpful AI assistant. Use the provided context to answer
-            questions accurately and concisely. If you don't know something or the context
-            doesn't contain relevant information, say so."""
-        },
-        {
-            "role": "user",
-            "content": f"""Based on this context:
-{context}
+        if web_results:
+            context_parts.append("\n--- Web Results ---")
+            for i, result in enumerate(web_results):
+                context_parts.append(f"Web Result {i+1} ({result['title']}):\n{result['snippet']}")
 
-Answer this question: {query}"""
-        }
-    ]
+        context = "\n\n".join(context_parts)
+        if not context:
+             context = "No specific context was found."
+        
+        # 6. Build messages for the LLM
+        system_prompt = (
+            "You are a helpful AI assistant. Use the provided context (documents and web results) "
+            "to answer the user's question accurately and concisely. "
+            "Cite the sources used in your answer using the format [Source X] for documents or [Web Result X] for web results, corresponding to the numbering in the context. "
+            "If the context doesn't contain relevant information to answer the question, explicitly state that."
+        )
+        user_prompt = f"Context:\n{context}\n\nQuestion: {query}"
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+        
+        # 7. Generate response and yield chunks
+        try:
+            response_generator = generate_with_provider(
+                messages,
+                model,
+                provider,
+                temperature
+            )
+            
+            async for response_chunk in response_generator:
+                if response_chunk: # Ensure not yielding empty strings
+                    yield {"type": "response", "data": response_chunk}
+        except GenerationError as e:
+            logger.error(f"Generation failed during streaming: {e}")
+            yield {"type": "error", "data": f"LLM generation failed: {e}"}
+        except Exception as e:
+            logger.error(f"Unexpected error during generation streaming: {e}")
+            yield {"type": "error", "data": f"An unexpected error occurred during generation: {e}"}
 
-    # Generate response
-    async for chunk in generate_with_provider(
-        messages=messages,
-        model=model,
-        provider=provider,
-        temperature=temperature
-    ):
-        yield chunk
+    except Exception as e:
+        logger.exception(f"Unhandled error in chat_with_knowledge: {e}") # Use logger.exception to include traceback
+        yield {"type": "error", "data": f"An unexpected error occurred: {e}"} 
 
 # Types locked—code's sharp as fuck! 🔥 

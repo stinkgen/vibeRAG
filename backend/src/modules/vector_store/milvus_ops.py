@@ -21,7 +21,7 @@ from pymilvus import (
     DataType
 )
 
-from config.config import CONFIG  # Config's in the house! 🏠
+from src.modules.config.config import CONFIG  # Config's in the house! 🏠
 
 # Configure logging with style
 logging.basicConfig(

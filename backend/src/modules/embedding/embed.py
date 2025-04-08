@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Dict, List, Union, Any, Optional
 import numpy as np
 import torch
-from sentence_transformers import SentenceTransformer
-from config.config import CONFIG
+# from sentence_transformers import SentenceTransformer # No longer needed here
+from src.modules.config.config import CONFIG
+from src.modules.embedding.service import get_embedding_model # Import the service function
 
 # Configure logging
 logging.basicConfig(
@@ -38,7 +39,7 @@ def get_device() -> str:
     return device
 
 def embed_chunks(chunks: Union[List[str], List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-    """Convert text chunks into vector embeddings using sentence-transformers.
+    """Convert text chunks into vector embeddings using the shared embedding service.
     
     Args:
         chunks: List of strings or dicts with 'text' key
@@ -47,12 +48,13 @@ def embed_chunks(chunks: Union[List[str], List[Dict[str, Any]]]) -> List[Dict[st
         List of dictionaries containing the original chunks with embeddings added
     """
     start_time = time.time()
-    device = get_device()
-    
+    # device = get_device() # Device handling is now within the service
+
     try:
-        # Load model and move it to the right device
-        model = SentenceTransformer(CONFIG.embedding.model_name, device=device)
-        
+        # Get model from the service
+        model = get_embedding_model()
+        device = model.device # Get the device the model is actually on from the service
+
         # Extract texts for embedding and prepare result structure
         texts = []
         chunk_objects = []
@@ -74,7 +76,7 @@ def embed_chunks(chunks: Union[List[str], List[Dict[str, Any]]]) -> List[Dict[st
                 sentences=batch_texts,
                 show_progress_bar=False,
                 convert_to_numpy=True,
-                device=device
+                device=device # Pass the model's device
             )
             
             # Process batch embeddings
@@ -90,12 +92,12 @@ def embed_chunks(chunks: Union[List[str], List[Dict[str, Any]]]) -> List[Dict[st
             chunk_objects[i]['embedding'] = embedding
         
         elapsed_time = time.time() - start_time
-        logger.info(f"Embedded {total_chunks} chunks in {elapsed_time:.2f} seconds using {CONFIG.embedding.model_name} 🎯")
+        logger.info(f"Embedded {total_chunks} chunks in {elapsed_time:.2f} seconds using {model.config.name_or_path} on device {device} 🎯") # Use model name from loaded model
         
         return chunk_objects
         
     except Exception as e:
-        logger.error(f"Failed to embed chunks: {str(e)}")
+        logger.error(f"Failed to embed chunks using service: {str(e)}")
         raise
 
 # Types locked—code's sharp as fuck! 🔥 

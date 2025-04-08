@@ -14,9 +14,9 @@ from unstructured.partition.auto import partition
 from unstructured.partition.pdf import partition_pdf
 from unstructured.documents.elements import Text, Title, ElementMetadata
 from transformers import GPT2TokenizerFast
-from embedding.embed import embed_chunks
-from vector_store.milvus_ops import store_with_metadata
-from config.config import CONFIG  # Config's in the house! 🏠
+from src.modules.embedding.embed import embed_chunks
+from src.modules.vector_store.milvus_ops import store_with_metadata
+from src.modules.config.config import CONFIG  # Config's in the house! 🏠
 
 # Configure logging
 logging.basicConfig(

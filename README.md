@@ -23,144 +23,98 @@ VibeRAG combines the power of vector databases, LLMs, and semantic search to pro
 
 (Add screenshots of your UI here)
 
-## Installation
+## Installation & Running (Docker Compose - Recommended)
+
+This method runs the entire application stack (backend, frontend, Milvus, MinIO, etcd) in Docker containers.
 
 ### Prerequisites
 
-- Python 3.9+
-- Node.js 16+ and npm
 - Docker and Docker Compose
-- OpenAI API key (for GPT models)
-- Google Search API key (optional, for web search)
+- Git (for cloning)
 
 ### Setup
 
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/yourusername/vibeRAG.git
-   cd vibeRAG
-   ```
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/yourusername/vibeRAG.git # Replace with actual repo URL
+    cd vibeRAG
+    ```
 
-2. Run the setup script to configure your environment:
-   ```bash
-   ./setup_env.sh
-   ```
-   
-   This interactive script will:
-   - Create an `.env.local` file from the template
-   - Prompt you for API keys and configuration values
-   - Set up the frontend environment files
-   
-   If you prefer manual setup, you can copy the template and edit it yourself:
-   ```bash
-   cp .env.example .env.local
-   ```
+2.  **Configure Environment Variables:**
+    Copy the example environment file. You **must** edit this file to add your API keys (like `OPENAI_API_KEY` if needed) and can adjust ports if necessary.
+    ```bash
+    cp .env.example .env.local
+    nano .env.local # Or your preferred editor
+    ```
+    *   The `BACKEND_PORT` and `FRONTEND_PORT` variables control which ports the application is exposed on your host machine.
+    *   Other variables (API keys, Milvus/MinIO settings) are passed into the respective containers.
 
-3. Start Milvus with Docker Compose:
-   ```bash
-   docker-compose up -d
-   ```
+3.  **Build and Run with Docker Compose:**
+    This command will build the backend and frontend images (if not already built) and start all services defined in `docker-compose.yml`.
+    ```bash
+    docker-compose up --build -d
+    ```
+    *   `--build`: Forces Docker to rebuild the images (use this after code changes).
+    *   `-d`: Runs the containers in detached mode (in the background).
 
-4. Install Python dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+4.  **Accessing the Application:**
+    *   **Frontend:** Open your browser to `http://localhost:<FRONTEND_PORT>` (e.g., `http://localhost:3000` if you used the default port).
+    *   **Backend API:** The API is accessible at `http://localhost:<BACKEND_PORT>` (e.g., `http://localhost:8000`).
 
-5. Start the backend:
-   ```bash
-   cd frontend/backend
-   uvicorn app:app --reload
-   ```
+5.  **Stopping the Application:**
+    ```bash
+    docker-compose down
+    ```
+    Use `docker-compose down -v` to also remove the data volumes (Milvus data, etc.).
 
-6. In another terminal, install frontend dependencies:
-   ```bash
-   cd frontend/frontend
-   npm install
-   npm start
-   ```
+6.  **Viewing Logs:**
+    ```bash
+    docker-compose logs -f # View logs for all services
+    docker-compose logs -f backend # View logs for backend only
+    docker-compose logs -f frontend # View logs for frontend only
+    ```
 
-## Usage
+## Development (Using Docker Compose)
 
-### Ingesting Documents
+For development, you can modify the `docker-compose.yml` file to mount your local source code into the containers. This allows for hot-reloading (changes reflect without rebuilding the image).
 
-1. Use the UI to upload documents or the command line tool:
-   ```bash
-   python -m ingest sample.pdf
-   ```
+1.  **Uncomment Volume Mounts:** In `docker-compose.yml`, uncomment the volume mount lines in the `backend` service:
+    ```yaml
+    # backend service...
+    volumes:
+      # Optional: Mount source code for development with hot-reloading
+      # Remove this for production builds
+      - ./backend/src:/app/src # <--- Uncomment this line
+      # Map the main volumes dir for potential file access/storage if needed
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes:/app/volumes
+    ```
+    *(Note: Frontend hot-reloading requires more complex Docker setup, often involving running `npm start` inside the container instead of serving static files. The current frontend Dockerfile is optimized for production builds.)*
 
-### Searching Knowledge Base
+2.  **Start with Docker Compose:**
+    ```bash
+    docker-compose up --build -d
+    ```
+3.  **Backend Hot-Reloading:** Changes made to files in your local `./backend/src` directory should now trigger the `uvicorn` server inside the container to reload automatically (check `docker-compose logs -f backend`).
 
-1. Navigate to the search page
-2. Enter your query
-3. Use filters to narrow down results
-
-### AI Chat
-
-1. Go to the chat interface
-2. Select "Knowledge Only" to restrict the assistant to your documents
-3. Use filters to select specific sources
-4. Enable "Web Search" to complement with internet results
-
-### Generating Presentations
-
-1. Enter a topic in the presentation generator
-2. Review and export the generated slides
-
-## Configuration
-
-The project now uses environment variables for all configuration. Key files:
-
-- `.env.local`: Main configuration file (created by setup script)
-- `.env.example`: Template with all available options
-- `frontend/.env`: Frontend environment variables (auto-generated)
-- `config/config.yaml`: Additional system settings
-
-Available configuration options include:
-- API keys for OpenAI and Google Search
-- Server host/port settings
-- Database connection parameters
-- Model selection and parameters
-
-## Project Structure
+## Project Structure (Dockerized)
 
 ```
 vibeRAG/
-├── config/               # Configuration files
-├── embedding/            # Embedding models and utilities
-├── frontend/             # UI components and backend API
-│   ├── backend/          # FastAPI server
-│   └── frontend/         # React frontend
-├── generation/           # Text generation utilities
-├── ingestion/            # Document processing pipeline
-├── research/             # Research report generation
-├── retrieval/            # Search functionality
-├── storage/              # Document storage
-├── tests/                # Test suite
-├── vector_store/         # Vector database operations
+├── backend/
+│   ├── src/              # Backend FastAPI source code
+│   ├── Dockerfile        # Instructions to build backend image
+│   └── requirements.txt  # Backend Python dependencies
+├── frontend/
+│   ├── public/
+│   ├── src/              # Frontend React source code
+│   ├── Dockerfile        # Instructions to build frontend image
+│   └── package.json      # Frontend dependencies
 ├── .env.example          # Environment variables template
-├── docker-compose.yml    # Docker setup for Milvus
-└── requirements.txt      # Python dependencies
-```
-
-## Development
-
-### Setting Up Development Environment
-
-1. Create a virtual environment:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-2. Install development dependencies:
-   ```bash
-   pip install -r requirements-dev.txt
-   ```
-
-### Running Tests
-
-```bash
-pytest tests/
+├── .env.local            # Local environment variables (used by docker-compose)
+├── .gitignore
+├── docker-compose.yml    # Defines all services (backend, frontend, db, etc.)
+├── README.md
+└── ...                   # Other config/script files if any
 ```
 
 ## License

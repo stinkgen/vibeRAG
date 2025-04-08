@@ -1,3 +1,8 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
 # Vector Store Module Rules
 
 These rules apply to Python files in the `vector_store/` directory.

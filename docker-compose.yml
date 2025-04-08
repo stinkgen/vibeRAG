@@ -49,6 +49,47 @@ services:
       - "etcd"
       - "minio"
 
+  backend:
+    container_name: vibe-backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - .env.local  # Pass environment variables from .env.local
+    environment:
+      # Override port if needed, otherwise defaults to 8000 from Dockerfile CMD
+      # Ensure BACKEND_PORT in .env.local matches the exposed port if overriding
+      - BACKEND_PORT=${BACKEND_PORT:-8000}
+      # Ensure the backend knows where Milvus is running
+      - MILVUS_HOST=standalone
+      - MILVUS_PORT=${MILVUS_API_PORT:-19530}
+      # Add other necessary backend env vars if they are not in .env.local
+      # e.g., OPENAI_API_KEY, GOOGLE_SEARCH_API_KEY, etc. if not using env_file
+    ports:
+      - "${BACKEND_PORT:-8000}:8000" # Map host port to container port 8000
+    volumes:
+      # Optional: Mount source code for development with hot-reloading
+      # Remove this for production builds
+      # - ./backend/src:/app/src
+      # Map the main volumes dir for potential file access/storage if needed
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes:/app/volumes
+    depends_on:
+      - standalone # Depends on Milvus being ready
+    networks:
+      - default
+
+  frontend:
+    container_name: vibe-frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${FRONTEND_PORT:-3000}:80" # Map host port to Nginx container port 80
+    # No depends_on needed usually, Nginx serves static files
+    # If Nginx needs to proxy to backend, add depends_on: [backend]
+    networks:
+      - default
+
 networks:
   default:
     name: milvus 

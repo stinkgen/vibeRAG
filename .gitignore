@@ -5,10 +5,6 @@
 .env.*
 !.env.example
 !.env.production
-frontend/**/.env
-frontend/**/.env.*
-!frontend/**/.env.example
-!frontend/**/.env.production
 secrets.json
 **/credentials/*
 **/firebase-config.*
@@ -92,4 +88,39 @@ ENV/
 # Milvus database files
 volumes/milvus/
 volumes/etcd/
-volumes/minio/ 
+volumes/minio/
+
+# Backend specific
+backend/venv/
+backend/env/
+backend/ENV/
+backend/.pytest_cache/
+backend/.coverage
+backend/htmlcov/
+backend/dist/
+backend/build/
+backend/*.egg-info/
+backend/.eggs/
+backend/src/**/__pycache__/
+backend/tests/__pycache__/
+
+# Frontend specific
+frontend/node_modules/
+frontend/build/
+frontend/.next/
+frontend/out/
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Storage (ensure it's ignored globally)
+storage/
+
+# Temporary and test files
+!backend/tests/test_*.py
+check_*.py
+debug_*.py
+
+# Personal data and files
+volumes/
+ 

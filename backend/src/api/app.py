@@ -22,15 +22,16 @@ from pydantic import BaseModel, Field, constr
 from dotenv import load_dotenv
 from pymilvus import Collection
 
-from frontend.backend.services.chat_service import ChatService, RAGError, SearchError, GenerationError
-from generation.slides import create_presentation
-from research.research import create_research_report
-from vector_store.milvus_ops import connect_milvus, init_collection, delete_document, ensure_connection
-from config.config import CONFIG
-from ingestion.ingest import upload_document
+# from frontend.backend.services.chat_service import ChatService, RAGError, SearchError, GenerationError # Commented out - remove later
+from src.modules.generation.slides import create_presentation # Fixed import
+from src.modules.research.research import create_research_report # Fixed import
+from src.modules.vector_store.milvus_ops import connect_milvus, init_collection, delete_document, ensure_connection # Fixed import
+from src.modules.config.config import CONFIG # Fixed import
+from src.modules.ingestion.ingest import upload_document # Fixed import
+from src.modules.generation.generate import chat_with_knowledge # Import the refactored chat function
 
 # Load env vars from root .env.local
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env.local"))
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../../.env.local")) # Fixed path
 
 # Configure logging with swagger
 logging.basicConfig(
@@ -79,15 +80,15 @@ app.add_middleware(
 )
 
 # Constants
-STORAGE_DIR = Path("storage/documents")
+STORAGE_DIR = Path("storage/documents") # This path might need adjustment depending on where the app runs vs. where storage/ is. Assuming CWD is project root for now.
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Initialize services
-chat_service = ChatService(
-    model=CONFIG.chat.model,
-    provider=CONFIG.chat.provider, 
-    temperature=CONFIG.chat.temperature
-)
+# chat_service = ChatService( # Commented out - remove later
+#     model=CONFIG.chat.model,
+#     provider=CONFIG.chat.provider,
+#     temperature=CONFIG.chat.temperature
+# )
 
 # Request/Response Models
 class ChatRequest(BaseModel):
@@ -96,11 +97,16 @@ class ChatRequest(BaseModel):
     filename: Optional[str] = None
     knowledge_only: bool = True
     use_web: bool = False
-    tags: Optional[List[str]] = Field(None, description="Optional tags to filter chunks by—slice it up! 🔥")
-    metadata: Optional[Dict[str, str]] = Field(None, description="Optional metadata to filter chunks by—filter gang! 💪")
-    stream: bool = Field(False, description="Whether to stream the response—real-time vibes! 🎵")
+    # tags: Optional[List[str]] = Field(None, description="Optional tags to filter chunks by—slice it up! 🔥") # Tags/Metadata filter not implemented in chat_with_knowledge yet
+    # metadata: Optional[Dict[str, str]] = Field(None, description="Optional metadata to filter chunks by—filter gang! 💪") # Tags/Metadata filter not implemented in chat_with_knowledge yet
+    stream: bool = Field(True, description="Whether to stream the response—real-time vibes! 🎵 Defaulting to True.")
     model: Optional[str] = Field(None, description="The model to use for generation—default uses config value")
     provider: Optional[str] = Field(None, description="The provider to use (ollama or openai)—default uses config value")
+
+# Non-streaming response model (if needed)
+class NonStreamChatResponse(BaseModel):
+    response: str
+    sources: List[Dict[str, Any]]
 
 class ChatResponse(BaseModel):
     """Chat response dropping knowledge."""
@@ -174,171 +180,65 @@ def health_check():
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
-    """Streams chat responses—4090's flowing! 🌊"""
-    try:
-        # Check if file exists if filename provided
-        if request.filename:
-            file_path = STORAGE_DIR / request.filename
-            if not file_path.exists():
-                return JSONResponse(
-                    status_code=404,
-                    content={"error": f"File not found: {request.filename}"}
-                )
+    """Handle chat requests, supporting both streaming and non-streaming modes."""
 
-        # Get model and provider from request or use defaults
-        model = request.model if hasattr(request, 'model') and request.model else CONFIG.chat.model
-        provider = request.provider if hasattr(request, 'provider') and request.provider else CONFIG.chat.provider
+    # Define the streaming generator function
+    async def stream_generator():
+        try:
+            async for event in chat_with_knowledge(
+                query=request.query,
+                filename=request.filename,
+                knowledge_only=request.knowledge_only,
+                use_web=request.use_web,
+                model=request.model, # Pass through model/provider if specified
+                provider=request.provider,
+                temperature=CONFIG.chat.temperature # Use configured temp
+            ):
+                # Format as Server-Sent Event (SSE)
+                yield f"data: {json.dumps(event)}\n\n"
+            # Send a final empty message or a specific 'end' event if needed
+            # yield "data: {\"type\": \"end\"}\n\n"
+        except Exception as e:
+            logger.exception(f"Error during chat stream generation: {e}")
+            error_event = {"type": "error", "data": f"An internal error occurred: {str(e)}"}
+            yield f"data: {json.dumps(error_event)}\n\n"
 
-        # Handle non-streaming requests differently
-        if not request.stream:
-            logging.info(f"Non-streaming chat request: {request.query[:50]}...")
+    # Handle streaming request
+    if request.stream:
+        logger.info(f"Streaming chat request received: query='{request.query[:50]}...'")
+        return StreamingResponse(stream_generator(), media_type="text/event-stream")
+    
+    # Handle non-streaming request
+    else:
+        logger.info(f"Non-streaming chat request received: query='{request.query[:50]}...'")
+        final_response = ""
+        sources_data = []
+        try:
+            async for event in chat_with_knowledge(
+                query=request.query,
+                filename=request.filename,
+                knowledge_only=request.knowledge_only,
+                use_web=request.use_web,
+                model=request.model,
+                provider=request.provider,
+                temperature=CONFIG.chat.temperature
+            ):
+                if event.get("type") == "sources":
+                    sources_data = event.get("data", [])
+                elif event.get("type") == "response":
+                    final_response += event.get("data", "")
+                elif event.get("type") == "error":
+                    # If an error occurs mid-stream in non-streaming mode, return it as an HTTP error
+                    raise HTTPException(status_code=500, detail=event.get("data", "Unknown generation error"))
             
-            # Initialize chat service if not already done
-            from frontend.backend.services.chat_service import ChatService
-            chat_service = ChatService(model=model, provider=provider)
-            
-            # Find relevant chunks and sources
-            try:
-                from retrieval.search import semantic_search
-                chunks = semantic_search(request.query, filename=request.filename)
-                
-                # Extract sources
-                sources = []
-                for chunk in chunks:
-                    metadata = chunk.get("metadata", {})
-                    if isinstance(metadata, str):
-                        try:
-                            metadata = json.loads(metadata)
-                        except:
-                            metadata = {}
-                    
-                    filename = metadata.get("filename", "unknown")
-                    page = metadata.get("page", "?")
-                    sources.append(f"Page {page} of {filename}")
-                
-                logging.info(f"Found {len(chunks)} relevant chunks for non-streaming request")
-            except Exception as e:
-                logging.error(f"Search failed: {str(e)}")
-                return JSONResponse(
-                    status_code=500,
-                    content={"error": f"Search failed: {str(e)}"}
-                )
-            
-            # Generate complete response
-            try:
-                # Collect chunks into a single context
-                context = "\n\n".join([chunk["text"] for chunk in chunks]) if chunks else "No specific context found."
-                
-                # Build messages for LLM
-                messages = [
-                    {"role": "system", "content": "You are a helpful AI assistant. Use the provided context to answer questions accurately and concisely. If you don't know something or the context doesn't contain relevant information, say so."},
-                    {"role": "user", "content": f"Based on this context:\n{context}\n\nAnswer this question: {request.query}"}
-                ]
-                
-                # Generate non-streaming response
-                import asyncio
-                from generation.generate import generate_with_provider
-                
-                response_text = ""
-                response_gen = generate_with_provider(
-                    messages,
-                    model,
-                    provider,
-                    CONFIG.chat.temperature
-                )
-                
-                # Collect all chunks
-                async for chunk in response_gen:
-                    response_text += chunk
-                
-                # Return complete response
-                return ChatResponse(
-                    response=response_text,
-                    sources=sources
-                )
-            except Exception as e:
-                logging.error(f"Generation failed: {str(e)}")
-                return JSONResponse(
-                    status_code=500,
-                    content={"error": f"Generation failed: {str(e)}"}
-                )
-
-        # Define a generator that properly formats the responses for SSE
-        async def format_sse_response():
-            try:
-                # Send an initial message to establish the connection
-                yield "data: {\"status\":\"connected\"}\n\n"
-                logging.info("SSE connection established, sent initial message")
-                
-                chat_generator = chat_service.chat_with_knowledge(
-                    query=request.query, 
-                    filename=request.filename,
-                    knowledge_only=request.knowledge_only,
-                    use_web=request.use_web,
-                    model=model,
-                    provider=provider
-                )
-
-                async for data in chat_generator:
-                    # Make sure data is properly formatted as valid JSON
-                    try:
-                        # Verify it's valid JSON by parsing and re-serializing
-                        json_obj = json.loads(data)
-                        clean_json = json.dumps(json_obj)
-                        # Format according to SSE standards: "data: {JSON}\n\n"
-                        sse_message = f"data: {clean_json}\n\n"
-                        logging.info(f"Sending SSE message: {sse_message.strip()[:100]}...")
-                        yield sse_message
-                    except json.JSONDecodeError as e:
-                        logging.error(f"Invalid JSON in stream: {data[:100]}..., Error: {str(e)}")
-                        error_message = f"data: {json.dumps({'error': 'Server error: Invalid response format'})}\n\n"
-                        logging.info(f"Sending error message: {error_message.strip()}")
-                        yield error_message
-
-                # Add a final event to signal the end of the stream
-                end_message = "event: end\ndata: {}\n\n"
-                logging.info("Sending end event message")
-                yield end_message
-                logging.info("Stream ended normally")
-            except Exception as e:
-                logging.error(f"Stream error: {str(e)}")
-                error_message = f"data: {json.dumps({'error': str(e)})}\n\n"
-                logging.info(f"Sending exception error message: {error_message.strip()}")
-                yield error_message
-                yield "event: end\ndata: {}\n\n"
-
-        # Ensure all required headers are set correctly for SSE
-        return StreamingResponse(
-            format_sse_response(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",  # For Nginx
-                "Access-Control-Allow-Origin": "*",  # CORS header
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, Authorization",
-                "Access-Control-Max-Age": "86400",  # 24 hours
-            }
-        )
-    except SearchError as e:
-        logging.error(f"Search failed: {str(e)}—Milvus crashed!")
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Search failed: {str(e)}"}
-        )
-    except GenerationError as e:
-        logging.error(f"Generation failed: {str(e)}—LLM's toast!")
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Generation failed: {str(e)}"}
-        )
-    except Exception as e:
-        logging.error(f"Unexpected error: {str(e)}—debug time!")
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Unexpected error: {str(e)}"}
-        )
+            return NonStreamChatResponse(response=final_response, sources=sources_data)
+        
+        except HTTPException as http_exc:
+            # Re-raise HTTP exceptions caused by errors during generation
+            raise http_exc
+        except Exception as e:
+            logger.exception(f"Error processing non-streaming chat request: {e}")
+            raise HTTPException(status_code=500, detail=f"An internal error occurred: {str(e)}")
 
 @app.get("/chat")
 async def chat_get(
@@ -446,7 +346,7 @@ async def options_presentation():
 @app.post("/api/presentation", response_model=PresentationResponse)
 async def generate_presentation(request: PresentationRequest) -> PresentationResponse:
     """Generate a presentation based on the provided prompt."""
-    logger.info(f"Presentation request incoming for '{request.prompt}'—slides gonna be lit! ��")
+    logger.info(f"Presentation request incoming for '{request.prompt}'—slides gonna be lit! 🚀")
     try:
         # Use await here since create_presentation is a coroutine
         result = await create_presentation(

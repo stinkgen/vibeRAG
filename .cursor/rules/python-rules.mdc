@@ -1,3 +1,8 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
 # General Python Rules
 
 **Scope**: Applies to all Python files (`*.py`) in the project.

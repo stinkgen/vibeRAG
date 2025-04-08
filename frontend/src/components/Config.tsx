@@ -54,7 +54,7 @@ const Config: React.FC = () => {
       base_url: 'https://api.openai.com/v1'
     },
     ollama: {
-      host: 'http://localhost:11434',
+      host: '',
       model: 'llama3'
     },
     milvus: {
@@ -293,20 +293,8 @@ const Config: React.FC = () => {
         <div className={styles.configSection}>
           <h3>Ollama Settings</h3>
           
-          <div className={styles.statusSection}>
-            <div className={styles.statusTitle}>
-              Status: 
-              <span className={ollamaStatus.online ? styles.statusOnline : styles.statusOffline}>
-                {ollamaStatus.online ? 'Online' : 'Offline'}
-              </span>
-            </div>
-            {ollamaStatus.error && (
-              <div className={styles.error}>{ollamaStatus.error}</div>
-            )}
-          </div>
-          
           <div className={styles.inputGroup}>
-            <label>Host</label>
+            <label>Ollama Host URL</label>
             <input 
               type="text"
               value={config.ollama.host}
@@ -314,38 +302,35 @@ const Config: React.FC = () => {
             />
           </div>
           
-          <div className={styles.statusSection}>
-            <div className={styles.statusTitle}>Available Models:</div>
-            <div className={styles.modelsList}>
-              {loadingOllama ? (
-                <div>Loading models...</div>
-              ) : ollamaStatus.models.length > 0 ? (
-                <ul>
-                  {ollamaStatus.models.map(model => (
-                    <li key={model} className={model === config.ollama.model ? styles.selectedModel : ''}>
-                      {model}
-                      {model !== config.ollama.model && (
-                        <button 
-                          type="button" 
-                          onClick={loadOllamaModel}
-                          disabled={modelLoading}
-                          className={styles.useModelButton}
-                        >
-                          Use
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div>No models available</div>
-              )}
-            </div>
-            
-            {modelLoadMessage && (
-              <div className={`${styles.message} ${modelLoadMessage.includes('success') ? styles.success : styles.warning}`}>
-                {modelLoadMessage}
-              </div>
+          <div className={styles.statusIndicator}>
+            Ollama Status: 
+            {ollamaStatus.online ? 
+              <span className={styles.online}> Online</span> : 
+              <span className={styles.offline}> Offline {ollamaStatus.error ? `(${ollamaStatus.error})` : ''}</span>
+            }
+          </div>
+          
+          <div className={styles.inputGroup}>
+            <label>Default Ollama Model</label>
+            <input 
+              type="text"
+              value={config.ollama.model}
+              onChange={(e) => handleChange('ollama', 'model', e.target.value)}
+            />
+            <button onClick={loadOllamaModel} disabled={loadingOllama || !ollamaStatus.online}>
+              {loadingOllama ? 'Loading...' : 'Load Model'}
+            </button>
+            {modelLoadMessage && <p className={styles.modelMessage}>{modelLoadMessage}</p>}
+          </div>
+          
+          <div className={styles.modelList}>
+            <p>Available Models:</p>
+            {ollamaStatus.models.length > 0 ? (
+              <ul>
+                {ollamaStatus.models.map(m => <li key={m}>{m}</li>)}
+              </ul>
+            ) : (
+              <p>No models loaded or Ollama offline.</p>
             )}
           </div>
         </div>

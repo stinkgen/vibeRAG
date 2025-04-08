@@ -9,9 +9,9 @@ from typing import Dict, List, Any
 import asyncio
 import json
 
-from config.config import CONFIG
-from retrieval.search import semantic_search
-from generation.generate import generate_with_provider
+from src.modules.config.config import CONFIG
+from src.modules.retrieval.search import semantic_search
+from src.modules.generation.generate import generate_with_provider
 
 # Configure logging
 logging.basicConfig(
@@ -111,22 +111,42 @@ You MUST return your response in this EXACT format, with bullet points for main 
         )
         
         # Collect all chunks into a single response
-        response = ""
+        response_text = ""
         async for chunk in response_gen:
-            response += chunk
-        
-        # Clean the response to help with JSON parsing
-        response = response.strip()
-        
-        # Parse JSON response
-        try:
-            slides = json.loads(response)
-            logger.info("Successfully generated presentation—4090's got style! 🎨")
-            return slides
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse presentation JSON: {str(e)}—4090's confused! 😅")
-            raise ValueError(f"Invalid presentation format: {str(e)}")
-            
+            response_text += chunk
+
+        # Clean the response and attempt to extract JSON block
+        response_text = response_text.strip()
+        logger.debug(f"Raw presentation response received: {response_text[:500]}...") # Log start of raw response
+
+        json_start = response_text.find('{')
+        json_end = response_text.rfind('}') + 1
+
+        if json_start != -1 and json_end != -1 and json_end > json_start:
+            json_str = response_text[json_start:json_end]
+            try:
+                slides_data = json.loads(json_str)
+                # Basic validation (optional but recommended)
+                if isinstance(slides_data, dict) and "slides" in slides_data and isinstance(slides_data["slides"], list):
+                     logger.info("Successfully generated and parsed presentation JSON.")
+                     # Add sources (filenames from context chunks) to the response if needed by frontend
+                     sources = list(set(c.get('metadata', {}).get('filename', 'unknown') for c in chunks if c.get('metadata', {}).get('filename')))
+                     slides_data["sources"] = sources # Assuming frontend expects sources here
+                     return slides_data
+                else:
+                    logger.error("Parsed JSON does not match expected presentation structure.")
+                    raise ValueError("Parsed JSON structure is invalid.")
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse extracted JSON from presentation response: {e}")
+                logger.debug(f"Extracted JSON string was: {json_str}")
+                raise ValueError(f"Invalid presentation format: Failed to parse JSON - {e}")
+        else:
+            logger.error("Could not find valid JSON block in presentation response.")
+            logger.debug(f"Full response was: {response_text}")
+            raise ValueError("Invalid presentation format: No JSON block found.")
+
+    except ValueError as ve: # Re-raise specific ValueErrors
+        raise ve
     except Exception as e:
-        logger.error(f"Failed to generate presentation: {str(e)}")
-        raise 
+        logger.exception(f"Failed to generate presentation: {e}") # Use logger.exception
+        raise RuntimeError(f"Failed to generate presentation due to an unexpected error: {e}") 

@@ -68,9 +68,9 @@ if [ ! -z "$frontend_port" ]; then
 fi
 
 # Create frontend environment file
-mkdir -p frontend/frontend
-cp .env.local frontend/frontend/.env
-cat > frontend/frontend/.env << EOL
+# mkdir -p frontend/frontend # No longer needed
+cp .env.local frontend/.env # Changed path
+cat > frontend/.env << EOL # Changed path
 # Frontend Environment Variables
 
 # API Configuration
@@ -82,7 +82,7 @@ REACT_APP_PORT=$(grep "FRONTEND_PORT" .env.local | cut -d'=' -f2)
 EOL
 
 # Create production environment file for frontend
-cat > frontend/frontend/.env.production << EOL
+cat > frontend/.env.production << EOL # Changed path
 # Production Environment Variables
 
 # API Configuration - Will be replaced during deployment
@@ -95,12 +95,15 @@ EOL
 echo
 echo "✅ Environment setup complete!"
 echo "📝 Your configuration has been saved to .env.local"
-echo "📝 Frontend environment files have been created in frontend/frontend/"
+echo "📝 Frontend environment files have been created in frontend/" # Changed path
 echo
 echo "🚀 Next steps:"
-echo "  1. Start your services with 'docker-compose up -d'"
-echo "  2. Start the backend with 'cd frontend/backend && python app.py'"
-echo "  3. Start the frontend with 'cd frontend/frontend && npm start'"
+echo "  1. Create/activate Python virtual environment: 'uv venv' then 'source .venv/bin/activate'"
+echo "  2. Install backend dependencies: 'uv pip sync backend/requirements.txt'"
+echo "  3. Install frontend dependencies: 'cd frontend && npm install'"
+echo "  4. Start background services: 'docker-compose up -d'"
+echo "  5. Start backend server: 'uvicorn backend.src.api.app:app --reload --host \$(grep BACKEND_HOST .env.local | cut -d= -f2 | cut -d\'#\' -f1 | xargs | sed \'s/\"//g\') --port \$(grep BACKEND_PORT .env.local | cut -d= -f2 | cut -d\'#\' -f1 | xargs)'"
+echo "  6. Start frontend server: 'cd frontend && npm start'"
 echo
 
 chmod +x setup_env.sh 

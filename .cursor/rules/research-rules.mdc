@@ -1,3 +1,8 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
 # Multi-Agent Research Rules
 
 **Scope**: Applies to Python files in the `research/` directory (`research/*.py`).

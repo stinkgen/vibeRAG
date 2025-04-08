@@ -1,3 +1,8 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
 # Generation Module Rules
 
 These rules apply to Python files in the `generation/` directory.

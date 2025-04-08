@@ -496,495 +496,189 @@ const Chat: React.FC = () => {
     }
   }, []);
 
-  // Handle streaming response with improved robustness and error recovery
-  const handleStreamingResponse = (e?: React.FormEvent) => {
-    // Prevent default form submission behavior if event is provided
+  // Refactored function to handle form submission (includes streaming logic)
+  const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    
-    // Validate input
-    if (!query.trim()) return;
-    
-    // Reset streaming state
-    setError('');
+    if (!query.trim() || loading) return;
+
     setLoading(true);
-    
-    // Close any existing EventSource before creating a new one
-    if (eventSourceRef.current) {
-      console.log("Closing existing EventSource before starting new request");
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-    
-    // Add user message to the conversation immediately
-    const userMessageId = Math.random().toString(36).substring(2, 9);
+    setError('');
     const userMessage: Message = {
-      id: userMessageId,
+      id: `user-${Date.now()}`,
       role: 'user',
       content: query,
-      timestamp: new Date()
-    };
-    
-    // Add a pending assistant message
-    const assistantMessageId = Math.random().toString(36).substring(2, 9);
-    const pendingMessage: Message = {
-      id: assistantMessageId,
-      role: 'assistant',
-      content: '',
       timestamp: new Date(),
-      sources: [],
-      pending: true
     };
-    
-    // Ensure messages are updated atomically
-    const updatedMessages = [...messages, userMessage, pendingMessage];
-    setMessages(updatedMessages);
-    console.log("Added user message and pending assistant message");
-    
-    // Build URL with query params
+
+    // Add user message and pending assistant message
+    setMessages((prevMessages) => [
+      ...prevMessages,
+      userMessage,
+      {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: '',
+        timestamp: new Date(),
+        pending: true, // Mark as pending
+        sources: [], // Initialize sources
+      },
+    ]);
+
+    setQuery(''); // Clear input
+    if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto'; // Reset height after clearing
+    }
+
+    // Construct query parameters for the GET request with EventSource
     const params = new URLSearchParams({
-      query: query,
+      query: userMessage.content,
       knowledge_only: knowledgeOnly.toString(),
       use_web: useWeb.toString(),
-      stream: 'true',
-      ...(config.chat.model ? { model: config.chat.model } : {}),
-      ...(config.chat.provider ? { provider: config.chat.provider } : {}),
+      stream: 'true', // Backend handles streaming
+      ...(config.chat.provider !== 'default' && config.chat.model ? { model: config.chat.model } : {}),
+      ...(config.chat.provider !== 'default' ? { provider: config.chat.provider } : {}),
       ...(filename ? { filename: filename } : {})
     });
-    
-    // Include full conversation context for better continuity - include the current user message
-    const context = [
-      ...messages.filter(msg => !msg.pending).map(msg => ({
-        role: msg.role,
-        content: msg.content
-      })),
-      { role: userMessage.role, content: userMessage.content }
-    ];
-    params.append('context', JSON.stringify(context));
-    
-    // Prepare filter data
-    const filterData = {
-      files: knowledgeFilters.filter(f => f.type === 'file').map(f => f.id),
-      collections: knowledgeFilters.filter(f => f.type === 'collection').map(f => f.id),
-      tags: knowledgeFilters.filter(f => f.type === 'tag').map(f => f.id),
-    };
-    
-    // Add filter data to the URL
-    params.append('filters', JSON.stringify(filterData));
-    
-    const url = `${API_ENDPOINTS.CHAT}?${params.toString()}`;
-    console.log(`Sending request to: ${url}`);
-    
-    // Clear the input after sending
-    setQuery('');
-    
-    // Create EventSource for SSE
-    try {
-      console.log("Creating new EventSource connection...");
-      const eventSource = new EventSource(url);
-      eventSourceRef.current = eventSource;
-      
-      let receivedData = false;
-      let connectionOpened = false;
-      let retryCount = 0;
-      const MAX_RETRIES = 3;
-      
-      // Connection opened
-      eventSource.onopen = () => {
-        console.log("EventSource connection opened");
-        connectionOpened = true;
-      };
-      
-      // Track accumulated content to avoid race conditions
-      let accumulatedContent = '';
-      let accumulatedSources: string[] = [];
-      
-      eventSource.onmessage = (event) => {
-        receivedData = true; // We've received at least one message
-        console.log("Received SSE message:", event.data.substring(0, 50) + "...");
-        
-        try {
-          // Parse the JSON message
-          const data = JSON.parse(event.data);
-          
-          // Check for connection status message
-          if (data.status === "connected") {
-            console.log("SSE connection confirmed by server");
-            return;
-          }
-          
-          // Check for error
-          if (data.error) {
-            setError(data.error);
-            console.error("Error from server:", data.error);
-            eventSource.close();
-            eventSourceRef.current = null;
-            setLoading(false);
-            
-            // Update the pending message to show the error
-            setMessages(prev => {
-              // Find the message and update it
-              const updatedMessages = [...prev];
-              const pendingMsgIndex = updatedMessages.findIndex(msg => msg.id === assistantMessageId);
-              
-              if (pendingMsgIndex !== -1) {
-                updatedMessages[pendingMsgIndex] = {
-                  ...updatedMessages[pendingMsgIndex],
-                  content: `Error: ${data.error}`,
-                  pending: false
-                };
-              }
-              
-              return updatedMessages;
-            });
-            return;
-          }
-          
-          // Handle sources
-          if (data.sources) {
-            console.log("Received sources:", data.sources);
-            accumulatedSources = data.sources;
-            
-            // Update the pending message with sources
-            setMessages(prev => {
-              // Find the message and update it
-              const updatedMessages = [...prev];
-              const pendingMsgIndex = updatedMessages.findIndex(msg => msg.id === assistantMessageId);
-              
-              if (pendingMsgIndex !== -1) {
-                updatedMessages[pendingMsgIndex] = {
-                  ...updatedMessages[pendingMsgIndex],
-                  sources: accumulatedSources
-                };
-              }
-              
-              return updatedMessages;
-            });
-            return;
-          }
-          
-          // Handle response chunk
-          if (data.response) {
-            console.log("Received response chunk:", data.response.substring(0, 20) + "...");
-            accumulatedContent += data.response;
-            
-            // Update the pending message content
-            setMessages(prev => {
-              // Find the message and update it
-              const updatedMessages = [...prev];
-              const pendingMsgIndex = updatedMessages.findIndex(msg => msg.id === assistantMessageId);
-              
-              if (pendingMsgIndex !== -1) {
-                updatedMessages[pendingMsgIndex] = {
-                  ...updatedMessages[pendingMsgIndex],
-                  content: accumulatedContent,
-                  sources: accumulatedSources
-                };
-              }
-              
-              return updatedMessages;
-            });
-            return;
-          }
-          
-          console.log("Received unhandled data format:", data);
-        } catch (e) {
-          // Fallback for non-JSON messages
-          console.error('Error parsing SSE message:', e, "Raw data:", event.data);
-          
-          if (event.data.includes('[DONE]')) {
-            console.log("Received [DONE] message");
-            eventSource.close();
-            eventSourceRef.current = null;
-            setLoading(false);
-            
-            // Mark the assistant message as complete
-            setMessages(prev => {
-              // Find the message and update it
-              const updatedMessages = [...prev];
-              const pendingMsgIndex = updatedMessages.findIndex(msg => msg.id === assistantMessageId);
-              
-              if (pendingMsgIndex !== -1) {
-                updatedMessages[pendingMsgIndex] = {
-                  ...updatedMessages[pendingMsgIndex],
-                  pending: false
-                };
-              }
-              
-              return updatedMessages;
-            });
-            return;
-          }
-          
-          // Don't set error for empty messages
-          if (event.data.trim()) {
-            setError(`Error parsing response: ${(e as Error).message || 'Unknown error'}. Check console for details.`);
-          }
-        }
-      };
-      
-      // Handle specific SSE events
-      eventSource.addEventListener('end', () => {
-        console.log("EventSource 'end' event received");
-        eventSource.close();
-        eventSourceRef.current = null;
-        setLoading(false);
-        
-        // Mark the assistant message as complete
-        setMessages(prev => {
-          // Find the message and update it atomically
-          const updatedMessages = [...prev];
-          const pendingMsgIndex = updatedMessages.findIndex(msg => msg.id === assistantMessageId);
-          
-          if (pendingMsgIndex !== -1) {
-            updatedMessages[pendingMsgIndex] = {
-              ...updatedMessages[pendingMsgIndex],
-              content: accumulatedContent,
-              sources: accumulatedSources,
-              pending: false
-            };
-          }
-          
-          return updatedMessages;
-        });
-      });
-      
-      eventSource.onerror = (err) => {
-        console.error("EventSource error:", err);
-        
-        // If we never received any data and connection was opened, retry
-        if (connectionOpened && !receivedData && retryCount < MAX_RETRIES) {
-          retryCount++;
-          console.log(`Retrying connection (${retryCount}/${MAX_RETRIES})...`);
-          return; // EventSource will automatically try to reconnect
-        }
-        
-        // If max retries reached or other conditions not met
-        if (!receivedData) {
-          console.log("Connection failed without receiving any data");
-          const errorMsg = "Connection error. The server may be unavailable or not properly configured for event streaming. Please check your browser console for details.";
-          setError(errorMsg);
-          
-          // Update the pending message with the error
-          setMessages(prev => {
-            // Find the message and update it
-            const updatedMessages = [...prev];
-            const pendingMsgIndex = updatedMessages.findIndex(msg => msg.id === assistantMessageId);
-            
-            if (pendingMsgIndex !== -1) {
-              updatedMessages[pendingMsgIndex] = {
-                ...updatedMessages[pendingMsgIndex],
-                content: errorMsg,
-                pending: false
-              };
-            }
-            
-            return updatedMessages;
-          });
-        } else {
-          // If we've received some data, it might just be end of stream
-          console.log("Error after receiving some data, might be end of stream");
-          
-          // Mark the assistant message as complete with whatever content we have
-          setMessages(prev => {
-            // Find the message and update it
-            const updatedMessages = [...prev];
-            const pendingMsgIndex = updatedMessages.findIndex(msg => msg.id === assistantMessageId);
-            
-            if (pendingMsgIndex !== -1) {
-              updatedMessages[pendingMsgIndex] = {
-                ...updatedMessages[pendingMsgIndex],
-                content: accumulatedContent || "Response was interrupted",
-                sources: accumulatedSources,
-                pending: false
-              };
-            }
-            
-            return updatedMessages;
-          });
-        }
-        
-        eventSource.close();
-        eventSourceRef.current = null;
-        setLoading(false);
-      };
-      
-      // Safety timeout to ensure the loading state doesn't get stuck
-      setTimeout(() => {
-        if (eventSourceRef.current === eventSource) {
-          console.log("Timeout reached, closing EventSource");
-          eventSource.close();
-          eventSourceRef.current = null;
-          setLoading(false);
-          
-          if (!receivedData) {
-            const timeoutMsg = "Request timed out after 30 seconds. Please try again or check server logs.";
-            setError(timeoutMsg);
-            
-            // Update the pending message with the timeout error
-            setMessages(prev => {
-              // Find the message and update it
-              const updatedMessages = [...prev];
-              const pendingMsgIndex = updatedMessages.findIndex(msg => msg.id === assistantMessageId);
-              
-              if (pendingMsgIndex !== -1) {
-                updatedMessages[pendingMsgIndex] = {
-                  ...updatedMessages[pendingMsgIndex],
-                  content: timeoutMsg,
-                  pending: false
-                };
-              }
-              
-              return updatedMessages;
-            });
-          } else {
-            // Mark the assistant message as complete even if timeout occurred
-            setMessages(prev => {
-              // Find the message and update it
-              const updatedMessages = [...prev];
-              const pendingMsgIndex = updatedMessages.findIndex(msg => msg.id === assistantMessageId);
-              
-              if (pendingMsgIndex !== -1) {
-                updatedMessages[pendingMsgIndex] = {
-                  ...updatedMessages[pendingMsgIndex],
-                  content: accumulatedContent,
-                  sources: accumulatedSources,
-                  pending: false
-                };
-              }
-              
-              return updatedMessages;
-            });
-          }
-        }
-      }, 30000); // 30 second timeout
-      
-    } catch (err) {
-      console.error("Error creating EventSource:", err);
-      const connectionError = `Failed to connect to server: ${(err as Error).message || 'Unknown error'}. Please try again.`;
-      setError(connectionError);
-      setLoading(false);
-      
-      // Update the pending message with the connection error
-      setMessages(prev => {
-        // Find the message and update it
-        const updatedMessages = [...prev];
-        const pendingMsgIndex = updatedMessages.findIndex(msg => msg.id === assistantMessageId && msg.pending);
-        
-        if (pendingMsgIndex !== -1) {
-          updatedMessages[pendingMsgIndex] = {
-            ...updatedMessages[pendingMsgIndex],
-            content: connectionError,
-            pending: false
-          };
-        }
-        
-        return updatedMessages;
-      });
-    }
-  };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!query.trim()) return;
-    
-    // Close any existing stream
-    if (eventSourceRef.current) {
-      console.log("Closing existing EventSource before starting new request");
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-    
-    if (streamResponse) {
-      handleStreamingResponse(e);
-      return;
-    }
-    
-    // Regular JSON response flow
-    setLoading(true);
-    setError('');
-    
-    // Add user message to the conversation immediately
-    const userMessageId = Math.random().toString(36).substring(2, 9);
-    const userMessage: Message = {
-      id: userMessageId,
-      role: 'user',
-      content: query,
-      timestamp: new Date()
-    };
-    
-    // Add a pending assistant message
-    const assistantMessageId = Math.random().toString(36).substring(2, 9);
-    const pendingMessage: Message = {
-      id: assistantMessageId,
-      role: 'assistant',
-      content: 'Loading...',
-      timestamp: new Date(),
-      pending: true
-    };
-    
-    const updatedMessages = [...messages, userMessage, pendingMessage];
-    setMessages(updatedMessages);
-    console.log("Added user message and pending assistant message (non-streaming)");
-    
-    // Clear the input after sending
-    setQuery('');
-    
     try {
-      const response = await axios.post<ChatResponse>(API_ENDPOINTS.CHAT, {
-        query: query,
-        knowledge_only: knowledgeOnly,
-        use_web: useWeb,
-        stream: false,
-        ...(config.chat.model ? { model: config.chat.model } : {}),
-        ...(config.chat.provider ? { provider: config.chat.provider } : {}),
-        ...(filename ? { filename: filename } : {})
-      });
+      const url = `${API_ENDPOINTS.CHAT}?${params.toString()}`;
+      console.log("Initiating SSE connection to:", url);
       
-      const data = response.data;
-      console.log("Received non-streaming response:", data);
-      
-      // Update the pending message with the response
-      setMessages(prev => {
-        // Find the message and update it
-        const updatedMessages = [...prev];
-        const pendingMsgIndex = updatedMessages.findIndex(msg => msg.id === assistantMessageId);
-        
-        if (pendingMsgIndex !== -1) {
-          updatedMessages[pendingMsgIndex] = {
-            ...updatedMessages[pendingMsgIndex],
-            content: data.response || "No response received", 
-            sources: data.sources || [],
-            pending: false
-          };
+      // Close existing connection if any
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+
+      // Use EventSource for SSE
+      const eventSource = new EventSource(url); 
+      eventSourceRef.current = eventSource;
+      let currentAssistantMessageId: string | null = null;
+      let sourcesReceived: any[] = [];
+      let receivedAnyData = false; // Flag to track if any message (even sources) was received
+
+      eventSource.onopen = () => {
+        console.log("SSE connection opened.");
+        setLoading(true); // Ensure loading is true when connection opens
+      };
+
+      eventSource.onmessage = (event) => {
+        receivedAnyData = true;
+        try {
+          console.log("SSE message received:", event.data);
+          const parsedData = JSON.parse(event.data);
+
+          setMessages((prevMessages) => {
+            const lastMessage = prevMessages[prevMessages.length - 1];
+            // Find the correct pending message ID
+            currentAssistantMessageId = lastMessage?.role === 'assistant' && lastMessage.pending ? lastMessage.id : null;
+
+            if (!currentAssistantMessageId) {
+                console.warn("Could not find pending assistant message to update.");
+                return prevMessages; 
+            }
+
+            // Update the last assistant message
+            const updatedMessages = [...prevMessages];
+            const assistantMsgIndex = updatedMessages.findIndex(msg => msg.id === currentAssistantMessageId);
+
+            if (assistantMsgIndex === -1) return prevMessages; // Safety check
+
+            const assistantMsg = { ...updatedMessages[assistantMsgIndex] }; // Create copy
+            
+            // Mark as not pending once first *meaningful* event arrives
+            if (parsedData.type === 'response' || parsedData.type === 'sources' || parsedData.type === 'error') {
+                assistantMsg.pending = false; 
+            }
+
+            switch (parsedData.type) {
+              case 'sources':
+                sourcesReceived = parsedData.data || [];
+                assistantMsg.sources = sourcesReceived.map((s, index) => 
+                    s.type === 'document' ? `[Source ${index + 1}] ${s.filename} (Page ${s.page})` :
+                    s.type === 'web' ? `[Web Result ${index + 1}] ${s.title}` :
+                    'Unknown Source'
+                );
+                console.log("Sources received and processed:", assistantMsg.sources);
+                break;
+              case 'response':
+                assistantMsg.content += parsedData.data;
+                break;
+              case 'error':
+                console.error("Error from backend stream:", parsedData.data);
+                setError(parsedData.data);
+                // Append error to content for visibility
+                assistantMsg.content += (assistantMsg.content ? '\n\n' : '') + `**Error:** ${parsedData.data}`;
+                // Don't close connection here, let onerror handle it
+                break;
+              default:
+                console.warn("Unknown event type received:", parsedData.type);
+            }
+            
+            updatedMessages[assistantMsgIndex] = assistantMsg; // Update the message in the array
+            return updatedMessages;
+          });
+
+        } catch (parseError) {
+          console.error("Failed to parse SSE message data:", event.data, parseError);
+          setError('Failed to process response from server.');
+          // Close connection on parsing error
+          eventSource.close(); 
+          setLoading(false);
+           // Mark the message as non-pending with an error
+           setMessages((prevMessages) => {
+              const lastMessage = prevMessages[prevMessages.length - 1];
+               if (lastMessage?.role === 'assistant' && lastMessage.pending) {
+                   const updatedMessages = [...prevMessages];
+                    const assistantMsgIndex = updatedMessages.findIndex(msg => msg.id === lastMessage.id);
+                    if(assistantMsgIndex !== -1) {
+                       updatedMessages[assistantMsgIndex] = {
+                           ...lastMessage,
+                           pending: false,
+                           content: lastMessage.content + "\n\n**Error:** Failed to parse server response."
+                       };
+                    }
+                   return updatedMessages;
+               }
+               return prevMessages;
+           });
         }
-        
-        return updatedMessages;
-      });
-      
-    } catch (error) {
-      console.error('Chat request failed:', error);
-      const errorMsg = 'Failed to get response. Please try again.';
-      setError(errorMsg);
-      
-      // Update the pending message with the error
-      setMessages(prev => {
-        // Find the message and update it
-        const updatedMessages = [...prev];
-        const pendingMsgIndex = updatedMessages.findIndex(msg => msg.id === assistantMessageId);
-        
-        if (pendingMsgIndex !== -1) {
-          updatedMessages[pendingMsgIndex] = {
-            ...updatedMessages[pendingMsgIndex],
-            content: errorMsg,
-            pending: false
-          };
+      };
+
+      eventSource.onerror = (error) => {
+        console.error("SSE connection error:", error);
+        // Only set general connection error if we haven't received *any* data yet
+        if (!receivedAnyData) {
+             setError('Connection error with the server.');
         }
-        
-        return updatedMessages;
-      });
-    } finally {
+        setLoading(false);
+        // Mark the last message as non-pending if it still is
+        setMessages((prevMessages) => {
+           const lastMessage = prevMessages[prevMessages.length - 1];
+           if (lastMessage?.role === 'assistant' && lastMessage.pending) {
+               const updatedMessages = [...prevMessages];
+               const assistantMsgIndex = updatedMessages.findIndex(msg => msg.id === lastMessage.id);
+                if(assistantMsgIndex !== -1) {
+                    updatedMessages[assistantMsgIndex] = {
+                        ...lastMessage,
+                        pending: false,
+                        // Append connection failed error only if no content yet and no specific error received
+                        content: lastMessage.content || !error ? (lastMessage.content + "\n\n**Error:** Connection failed.") : lastMessage.content
+                    };
+                }
+               return updatedMessages;
+           }
+           return prevMessages;
+        });
+        eventSource.close();
+        eventSourceRef.current = null;
+      };
+
+    } catch (err: any) {
+      console.error("Error initiating SSE request:", err);
+      setError(err.message || 'Failed to initiate connection.');
       setLoading(false);
+      // Remove pending message on initial submission failure
+      setMessages((prevMessages) => prevMessages.filter(msg => !msg.pending));
     }
   };
 
@@ -1328,7 +1022,7 @@ const Chat: React.FC = () => {
         </div>
       )}
       
-      <form className={styles.inputForm} onSubmit={(e) => streamResponse ? handleStreamingResponse(e) : handleSubmit(e)}>
+      <form onSubmit={handleSubmit} className={styles.inputArea}>
         <textarea
           ref={textareaRef}
           value={query}
@@ -1337,9 +1031,9 @@ const Chat: React.FC = () => {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
               e.preventDefault();
               if (streamResponse) {
-                handleStreamingResponse();
+                handleSubmit();
               } else {
-                handleSubmit(e);
+                handleSubmit();
               }
             }
           }}
@@ -1349,14 +1043,10 @@ const Chat: React.FC = () => {
         />
         <button 
           type="submit" 
-          className={styles.sendButton}
+          className={`${styles.sendButton} ${loading ? styles.loading : ''}`}
           disabled={loading || !query.trim()}
         >
-          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13"></line>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-          </svg>
-          <span>SEND</span>
+          {loading ? '...' : 'Send'}
         </button>
       </form>
       

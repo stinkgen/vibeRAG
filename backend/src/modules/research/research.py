@@ -9,9 +9,9 @@ import asyncio
 import json
 from typing import Dict, List, Any
 
-from config.config import CONFIG
-from retrieval.search import semantic_search, google_search
-from generation.generate import generate_with_provider
+from src.modules.config.config import CONFIG
+from src.modules.retrieval.search import semantic_search, google_search
+from src.modules.generation.generate import generate_with_provider
 
 # Configure logging
 logging.basicConfig(
@@ -98,26 +98,42 @@ async def create_research_report(
         )
         
         # Collect all chunks into a single response
-        response = ""
+        response_text = ""
         async for chunk in response_gen:
-            response += chunk
-        
-        # Extract JSON from response
-        start_idx = response.find('{')
-        end_idx = response.rfind('}') + 1
-        if start_idx >= 0 and end_idx > start_idx:
-            json_str = response[start_idx:end_idx]
+            response_text += chunk
+
+        # Clean the response and attempt to extract JSON block
+        response_text = response_text.strip()
+        logger.debug(f"Raw research response received: {response_text[:500]}...")
+
+        json_start = response_text.find('{')
+        json_end = response_text.rfind('}') + 1
+
+        if json_start != -1 and json_end != -1 and json_end > json_start:
+            json_str = response_text[json_start:json_end]
             try:
-                result = json.loads(json_str)
-                logger.info("Successfully generated research report—4090's got insights! 🧠")
-                return result
+                report_data = json.loads(json_str)
+                # Basic validation (optional)
+                if isinstance(report_data, dict) and "report" in report_data and isinstance(report_data["report"], dict):
+                    logger.info("Successfully generated and parsed research report JSON.")
+                    # Add detailed sources if needed (currently handled in prompt)
+                    # report_data["report"]["detailed_sources"] = ... 
+                    return report_data
+                else:
+                    logger.error("Parsed JSON does not match expected report structure.")
+                    raise ValueError("Parsed JSON structure is invalid.")
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse research report JSON: {str(e)}—4090's confused! 😅")
-                raise ValueError(f"Invalid research report format: {str(e)}")
+                logger.error(f"Failed to parse extracted JSON from research response: {e}")
+                logger.debug(f"Extracted JSON string was: {json_str}")
+                raise ValueError(f"Invalid research report format: Failed to parse JSON - {e}")
         else:
-            logger.error("No JSON found in response—4090's lost! 😕")
-            raise ValueError("No valid JSON found in response")
-            
+            logger.error("Could not find valid JSON block in research response.")
+            logger.debug(f"Full response was: {response_text}")
+            raise ValueError("Invalid research report format: No JSON block found.")
+
+    except ValueError as ve: # Re-raise specific ValueErrors
+        raise ve
     except Exception as e:
-        logger.error(f"Failed to generate research report: {str(e)}")
-        raise 
+        logger.exception(f"Failed to generate research report: {e}") # Use logger.exception
+        raise RuntimeError(f"Failed to generate research report due to an unexpected error: {e}")
+            

@@ -1,0 +1,28 @@
+# Core dependencies
+fastapi
+uvicorn[standard]
+click
+pydantic
+python-multipart
+pymilvus
+sentence-transformers
+transformers
+torch
+spacy
+unstructured[local-inference]
+langdetect
+crewai
+ollama
+pyyaml
+python-dotenv
+minio
+tqdm
+
+# Optional LLM providers
+anthropic
+openai
+
+# Development dependencies
+pytest
+pytest-asyncio
+httpx

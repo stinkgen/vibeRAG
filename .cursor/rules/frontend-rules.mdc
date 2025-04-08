@@ -1,3 +1,8 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
 # Frontend Rules
 
 These rules apply to TypeScript files (*.ts, *.tsx) in the `frontend/` directory.

@@ -11,10 +11,10 @@ from typing import Dict, List, Any, Optional, Union, TypedDict, Tuple
 import numpy as np
 import requests
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
 from pymilvus import Collection, connections
-from vector_store.milvus_ops import search_by_tags, search_by_metadata, search_collection
-from config.config import CONFIG  # Config's in the house! 🏠
+from src.modules.vector_store.milvus_ops import search_by_tags, search_by_metadata, search_collection
+from src.modules.config.config import CONFIG  # Config's in the house! 🏠
+from src.modules.embedding.service import get_embedding_model # Import the service function
 
 # Load environment variables
 load_dotenv()
@@ -32,10 +32,10 @@ COLLECTION_NAME = "vibe_chunks"
 TOP_K = 10  # Default number of results to return
 
 # Initialize the embedding model
-_model = None
+# _model = None
 
 def get_embeddings(text: str) -> np.ndarray:
-    """Get embeddings for text using sentence-transformers.
+    """Get embeddings for text using the shared embedding service.
     
     Args:
         text: Text to embed
@@ -43,21 +43,20 @@ def get_embeddings(text: str) -> np.ndarray:
     Returns:
         Numpy array of embeddings
     """
-    global _model
+    # global _model # Remove global usage
     
     try:
-        # Initialize model if not already done
-        if _model is None:
-            _model = SentenceTransformer(CONFIG.embedding.model_name)
-            logger.info(f"Initialized {CONFIG.embedding.model_name} for embeddings 🧠")
+        # Get model from service
+        model = get_embedding_model()
         
         # Generate embeddings
-        embeddings = _model.encode([text], convert_to_numpy=True)[0]
+        # Note: model.encode expects a list of sentences
+        embeddings = model.encode([text], convert_to_numpy=True)[0]
         return embeddings
         
     except Exception as e:
-        logger.error(f"Failed to generate embeddings: {str(e)}")
-        raise
+        logger.error(f"Failed to generate embeddings using service: {str(e)}")
+        raise # Re-raise the exception
 
 # Type definitions—4090's precision-tuned! 🔥
 class SearchMetadata(TypedDict):

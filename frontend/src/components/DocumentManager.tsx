@@ -173,13 +173,13 @@ const DocumentManager: React.FC = () => {
     };
 
     // Handle document deletion
-    const handleDelete = async (docId: string) => {
+    const handleDelete = async (filename: string) => {
         if (!window.confirm('Sure you wanna delete this doc, brah?')) {
             return;
         }
 
         try {
-            await axios.delete(API_ENDPOINTS.DELETE_DOCUMENT(docId));
+            await axios.delete(API_ENDPOINTS.DELETE_DOCUMENT_BY_FILENAME(filename));
             console.log('Doc deleted—cleanup complete! 🧹');
             fetchDocs();
         } catch (error) {
@@ -268,7 +268,7 @@ const DocumentManager: React.FC = () => {
                                 </a>
                             </h3>
                             <button
-                                onClick={() => handleDelete(doc.doc_id)}
+                                onClick={() => handleDelete(doc.filename)}
                                 className={styles.deleteButton}
                                 title="Delete document"
                             >

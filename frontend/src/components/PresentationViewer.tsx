@@ -111,20 +111,29 @@ const PresentationViewer: React.FC = () => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!prompt.trim()) {
+            setError('Please enter a presentation topic');
+            return;
+        }
         setLoading(true);
+        setError(''); // Clear previous errors
+        setPresentation(null); // Clear previous presentation
         try {
-            const response = await axios.post('http://localhost:8000/api/presentation', {
+            // Use API_ENDPOINTS constant
+            const response = await axios.post(API_ENDPOINTS.PRESENTATION, {
                 prompt,
                 filename: filename || undefined,
                 provider: modelConfig.provider,
                 model: modelConfig.model,
+                // n_slides is not passed here, assuming backend uses default or it's handled elsewhere
             });
             const data = response.data as PresentationResponse;
             setPresentation(data);
             setExpandedSlides([]); // Reset expanded state
-            console.log('Presentation slides are vibing! 🎨');
-        } catch (error) {
-            console.error('Presentation request failed to vibe:', error);
+            console.log('Presentation slides received!');
+        } catch (error: any) {
+            console.error('Presentation request failed:', error);
+            setError(error.response?.data?.detail || error.message || 'Failed to generate presentation.');
         } finally {
             setLoading(false);
         }
@@ -142,14 +151,31 @@ const PresentationViewer: React.FC = () => {
         // Extract filename from source (e.g., "Page 76 of whitepaper.pdf" -> "whitepaper.pdf")
         const match = source.match(/of\s+([^,\s]+)$/);
         if (match && match[1]) {
-            const filename = match[1];
+            const pdfFilename = match[1];
             try {
-                const response = await axios.get(`http://localhost:8000/get_pdf/${filename}`);
-                // Add type assertion to fix the TypeScript error
-                interface PDFResponse { url: string }
-                window.open((response.data as PDFResponse).url, '_blank');
-            } catch (error) {
+                 // Use API_ENDPOINTS constant for getting the PDF URL/file
+                const pdfUrl = API_ENDPOINTS.GET_DOCUMENT(pdfFilename);
+                console.log("Attempting to open PDF from URL:", pdfUrl);
+                // Assuming the backend endpoint directly returns the PDF or redirects
+                // Opening in a new tab is often blocked, directly fetching might be better if backend supports it
+                // Or if backend returns a temporary URL, use that.
+                // For now, just opening the constructed URL.
+                window.open(pdfUrl, '_blank'); 
+                
+                // --- Alternative if backend returns JSON with URL --- 
+                // const response = await axios.get(pdfUrl); 
+                // interface PDFResponse { url: string } 
+                // if (response.data && typeof (response.data as PDFResponse).url === 'string') {
+                //    window.open((response.data as PDFResponse).url, '_blank');
+                // } else {
+                //    console.error('Invalid response format for PDF link');
+                //    setError('Could not get valid link for the PDF document.');
+                // }
+                // --- End Alternative ---
+
+            } catch (error: any) {
                 console.error('Failed to open PDF:', error);
+                 setError(error.response?.data?.detail || error.message || 'Could not open PDF source.');
             }
         }
     };

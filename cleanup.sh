@@ -12,9 +12,19 @@ if ! grep -q "\.env\.local" .gitignore; then
   echo ".env.local" >> .gitignore
 fi
 
-if ! grep -q "frontend/frontend/\.env" .gitignore; then
+if ! grep -q "^frontend/\.env$" .gitignore; then
   echo "⚠️  Adding frontend/.env to .gitignore"
-  echo "frontend/frontend/.env" >> .gitignore
+  echo "frontend/.env" >> .gitignore
+fi
+
+if ! grep -q "^frontend/node_modules/$" .gitignore; then
+  echo "⚠️  Adding frontend/node_modules/ to .gitignore"
+  echo "frontend/node_modules/" >> .gitignore
+fi
+
+if ! grep -q "^\.venv/$" .gitignore; then
+  echo "⚠️  Adding .venv/ to .gitignore"
+  echo ".venv/" >> .gitignore
 fi
 
 # 2. Clean up server logs
@@ -35,9 +45,9 @@ find . -name "*.pyo" -delete
 find . -name "*.pyd" -delete
 
 # 5. Clean up any Node.js artifacts in frontend
-if [ -d "frontend/frontend/node_modules" ]; then
-  echo "🗑️  Removing node_modules"
-  rm -rf frontend/frontend/node_modules
+if [ -d "frontend/node_modules" ]; then
+  echo "🗑️  Removing node_modules from frontend"
+  rm -rf frontend/node_modules
 fi
 
 # 6. Make sure .env.example is present with all necessary variables
@@ -95,9 +105,9 @@ EOL
 fi
 
 # 7. Clean up any environment files in frontend directory that might contain keys
-if [ -f "frontend/frontend/.env" ]; then
+if [ -f "frontend/.env" ]; then
   echo "🗑️  Removing frontend/.env (will be regenerated from setup script)"
-  rm frontend/frontend/.env
+  rm frontend/.env
 fi
 
 # Make sure setup_env.sh exists and is executable
@@ -123,4 +133,6 @@ echo "🔒 IMPORTANT: Your .env.local file with API keys is preserved locally an
 echo "   will NOT be pushed to GitHub because it's listed in .gitignore."
 echo ""
 echo "🔑 For others using your repository, they will need to run ./setup_env.sh"
-echo "   or create their own .env.local file based on the .env.example template." 
+echo "   create a Python environment (e.g., 'uv venv'), activate it,"
+echo "   and install dependencies ('uv pip sync backend/requirements.txt')"
+echo "   based on the .env.example and requirements.txt files." 
