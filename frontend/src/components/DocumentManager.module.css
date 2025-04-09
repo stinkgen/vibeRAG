@@ -478,4 +478,182 @@
     background: rgba(0, 20, 40, 0.3);
     border-radius: 6px;
     border: 1px dashed rgba(0, 150, 255, 0.2);
+}
+
+/* Styles for Action Buttons in Doc Header */
+.actionButtons {
+    display: flex;
+    gap: 0.5rem; /* Adjust spacing between buttons */
+    align-items: center;
+}
+
+.viewButton,
+.editButton,
+.deleteButton {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.2rem; /* Adjust icon size */
+    color: var(--text-color-secondary); /* Use a secondary color */
+    padding: 0.2rem;
+    transition: color 0.2s ease;
+}
+
+.viewButton:hover,
+.editButton:hover,
+.deleteButton:hover {
+    color: var(--accent-color); /* Highlight on hover */
+}
+
+/* Ensure anchor tag for view button behaves like a button */
+.viewButton {
+    text-decoration: none;
+}
+
+/* Styles for Edit Modal */
+.modalOverlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.6);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.modalContent {
+    background-color: var(--background-color-secondary);
+    padding: 2rem;
+    border-radius: 8px;
+    min-width: 400px;
+    max-width: 600px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border-color);
+}
+
+.modalContent h2 {
+    margin-top: 0;
+    color: var(--text-color-primary);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.modalSection {
+    margin-bottom: 1.5rem;
+}
+
+.modalSection label {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: var(--text-color-secondary);
+    font-weight: 500;
+}
+
+.modalInput {
+    width: 100%;
+    padding: 0.6rem 0.8rem;
+    border: 1px solid var(--border-color);
+    background-color: var(--background-color-tertiary);
+    color: var(--text-color-primary);
+    border-radius: 4px;
+    font-size: 0.95rem;
+    box-sizing: border-box; /* Include padding in width */
+}
+
+.metadataEditRow {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    align-items: center;
+}
+
+.metadataEditRow input:first-child {
+    flex-basis: 40%;
+}
+.metadataEditRow input:nth-child(2) {
+    flex-basis: 60%;
+}
+
+.modalAddButton, 
+.modalRemoveButton {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.3rem;
+    font-size: 1rem;
+    color: var(--text-color-secondary);
+}
+
+.modalAddButton {
+    margin-top: 0.5rem;
+    color: var(--accent-color);
+    font-weight: 500;
+}
+
+.modalRemoveButton {
+    font-size: 1.2rem; /* Make cross slightly larger */
+    line-height: 1;
+}
+
+.modalAddButton:hover,
+.modalRemoveButton:hover {
+    opacity: 0.8;
+}
+
+.modalActions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.modalButtonCancel,
+.modalButtonSave {
+    padding: 0.6rem 1.2rem;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: background-color 0.2s ease;
+}
+
+.modalButtonCancel {
+    background-color: var(--background-color-tertiary);
+    color: var(--text-color-secondary);
+    border: 1px solid var(--border-color);
+}
+
+.modalButtonCancel:hover {
+    background-color: var(--border-color);
+}
+
+.modalButtonSave {
+    background-color: var(--accent-color);
+    color: white;
+}
+
+.modalButtonSave:hover {
+    opacity: 0.9;
+}
+
+.modalButtonCancel:disabled,
+.modalButtonSave:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.modalError {
+    background-color: rgba(255, 0, 0, 0.1);
+    color: #ff4d4d;
+    border: 1px solid rgba(255, 0, 0, 0.2);
+    padding: 0.8rem;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
 } 

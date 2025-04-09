@@ -32,27 +32,10 @@ const PresentationViewer: React.FC = () => {
         provider: 'openai',
         model: 'gpt-4',
     });
-    const [config, setConfig] = useState<any>(null);
     const [error, setError] = useState('');
-    const [slides, setSlides] = useState<Slide[]>([]);
-    const [sources, setSources] = useState<string[]>([]);
     const [currentSlide, setCurrentSlide] = useState(0);
     const [downloading, setDownloading] = useState(false);
-    const [numSlides, setNumSlides] = useState(0);
-
-    // Fetch config on mount
-    useEffect(() => {
-        const fetchConfig = async () => {
-            try {
-                const response = await axios.get(API_ENDPOINTS.CONFIG);
-                setConfig(response.data);
-            } catch (error) {
-                console.error('Failed to fetch config:', error);
-            }
-        };
-        
-        fetchConfig();
-    }, []);
+    const [numSlides, setNumSlides] = useState<number>(5);
 
     // Generate presentation slides
     const generatePresentation = async () => {
@@ -63,15 +46,13 @@ const PresentationViewer: React.FC = () => {
         
         setLoading(true);
         setError('');
-        setSlides([]);
-        setSources([]);
         
         try {
             const response = await axios.post(API_ENDPOINTS.PRESENTATION, {
                 prompt: prompt,
                 n_slides: numSlides,
-                model: config?.chat?.model || 'gpt-4',
-                provider: config?.chat?.provider || 'openai'
+                model: modelConfig.model,
+                provider: modelConfig.provider
             });
             
             const responseData = response.data as { 
@@ -79,9 +60,9 @@ const PresentationViewer: React.FC = () => {
                 sources: string[];
             };
             
-            setSlides(responseData.slides);
-            setSources(responseData.sources);
-            setCurrentSlide(0);
+            setPresentation(responseData);
+            setExpandedSlides([]);
+            console.log('Presentation slides received!');
         } catch (error) {
             console.error('Error generating presentation:', error);
             setError('Failed to generate presentation. Please try again.');
@@ -92,18 +73,73 @@ const PresentationViewer: React.FC = () => {
 
     // Download presentation as PDF
     const downloadPDF = async () => {
+        if (!presentation || !presentation.slides) {
+            setError('No presentation content to download.');
+            return;
+        }
         setDownloading(true);
+        setError('');
         try {
-            // Generate unique filename
-            const filename = `presentation_${Date.now()}.pdf`;
-            
-            const response = await axios.get(`${API_ENDPOINTS.GET_DOCUMENT(filename)}`);
-            // Process the response...
-            
-            // Rest of the function
-        } catch (error) {
-            console.error('Error downloading presentation:', error);
-            setError('Failed to download presentation');
+            // NOTE: This requires the jsPDF library to be installed (`npm install jspdf` or `yarn add jspdf`)
+            const { jsPDF } = await import('jspdf');
+            const doc = new jsPDF();
+            const pageHeight = doc.internal.pageSize.height;
+            const pageWidth = doc.internal.pageSize.width;
+            const margin = 15;
+            let y = margin; // Current y position on the page
+
+            const addText = (text: string, size: number, isBold: boolean = false) => {
+                doc.setFontSize(size);
+                doc.setFont('helvetica', isBold ? 'bold' : 'normal');
+                const lines = doc.splitTextToSize(text, pageWidth - margin * 2);
+                lines.forEach((line: string) => {
+                    if (y + 5 > pageHeight - margin) { // Check for page break
+                        doc.addPage();
+                        y = margin;
+                    }
+                    doc.text(line, margin, y);
+                    y += 7; // Adjust line height
+                });
+            };
+
+            presentation.slides.forEach((slide, index) => {
+                if (index > 0) {
+                    doc.addPage();
+                    y = margin;
+                }
+                addText(`Slide ${index + 1}: ${slide.title}`, 16, true);
+                y += 5; // Space after title
+                
+                // Parse and add bullet points
+                slide.content?.forEach(line => {
+                    const bulletMatch = line.match(/^[-•*]\s*(.*)/);
+                    if (bulletMatch && bulletMatch[1]) {
+                        addText(`• ${bulletMatch[1]}`, 12);
+                    } else if (!line.toLowerCase().startsWith('visual:')) { // Add non-bullet, non-visual lines
+                        addText(line, 12);
+                    }
+                });
+                 y += 10; // Space after content
+            });
+
+            // Add sources page if sources exist
+            if (presentation.sources && presentation.sources.length > 0) {
+                doc.addPage();
+                y = margin;
+                addText('Sources', 16, true);
+                y += 5;
+                presentation.sources.forEach(source => {
+                    addText(source, 10);
+                    y += 5; // Smaller line height for sources
+                });
+            }
+
+            doc.save(`presentation_${Date.now()}.pdf`);
+            // NOTE: End jsPDF Logic
+
+        } catch (error: any) {
+            console.error('Error generating or downloading presentation PDF:', error);
+            setError('Failed to download presentation. Ensure jsPDF is installed and PDF generation logic is correct.');
         } finally {
             setDownloading(false);
         }
@@ -119,13 +155,12 @@ const PresentationViewer: React.FC = () => {
         setError(''); // Clear previous errors
         setPresentation(null); // Clear previous presentation
         try {
-            // Use API_ENDPOINTS constant
             const response = await axios.post(API_ENDPOINTS.PRESENTATION, {
                 prompt,
                 filename: filename || undefined,
                 provider: modelConfig.provider,
                 model: modelConfig.model,
-                // n_slides is not passed here, assuming backend uses default or it's handled elsewhere
+                n_slides: numSlides, // Pass numSlides as n_slides
             });
             const data = response.data as PresentationResponse;
             setPresentation(data);
@@ -218,6 +253,20 @@ const PresentationViewer: React.FC = () => {
                     />
                 </div>
                 
+                <div className={styles.inputGroup} style={{ maxWidth: '150px' }}>
+                    <label htmlFor="numSlidesInput" className={styles.inputLabel}>Number of Slides:</label>
+                    <input
+                        id="numSlidesInput"
+                        type="number"
+                        value={numSlides}
+                        onChange={(e) => setNumSlides(parseInt(e.target.value, 10) || 1)}
+                        min="1"
+                        max="20"
+                        className={styles.input}
+                        style={{ textAlign: 'center' }}
+                    />
+                </div>
+                
                 <div className={styles.modelSelector}>
                     <ModelSelector
                         provider={modelConfig.provider}
@@ -232,8 +281,18 @@ const PresentationViewer: React.FC = () => {
                 </button>
             </form>
 
+            {error && <div className={styles.error}>{error}</div>}
+
             {presentation && (
                 <div className={styles.presentation}>
+                    <button 
+                        onClick={downloadPDF} 
+                        className={styles.downloadButton} 
+                        disabled={downloading}
+                    >
+                        {downloading ? 'Downloading...' : 'Download PDF 📄'}
+                    </button>
+
                     <p className={styles.note}>Click to expand slides—presentation vibes FTW! 🚀</p>
                     
                     <div className={styles.slides}>

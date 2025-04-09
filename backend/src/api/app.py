@@ -14,8 +14,9 @@ import socket
 import uvicorn
 from contextlib import asynccontextmanager
 import aiohttp
+import starlette.formparsers
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Query
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Query, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field, constr
@@ -25,10 +26,10 @@ from pymilvus import Collection
 # from frontend.backend.services.chat_service import ChatService, RAGError, SearchError, GenerationError # Commented out - remove later
 from src.modules.generation.slides import create_presentation # Fixed import
 from src.modules.research.research import create_research_report # Fixed import
-from src.modules.vector_store.milvus_ops import connect_milvus, init_collection, delete_document, ensure_connection # Fixed import
+from src.modules.vector_store.milvus_ops import connect_milvus, init_collection, delete_document, ensure_connection, update_metadata_in_vector_store # Fixed import
 from src.modules.config.config import CONFIG # Fixed import
 from src.modules.ingestion.ingest import upload_document # Fixed import
-from src.modules.generation.generate import chat_with_knowledge # Import the refactored chat function
+from src.modules.generation.generate import chat_with_knowledge, get_openai_client # Import the refactored chat function and get_openai_client
 
 # Load env vars from root .env.local
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../../.env.local")) # Fixed path
@@ -40,9 +41,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Increase max file size limit for Starlette's multipart parser
+# Set to 100MB (adjust as needed)
+# This is a workaround; proper streaming upload is preferred for very large files.
+starlette.formparsers.MultiPartParser.max_file_size = 100 * 1024 * 1024
+starlette.formparsers.FormParser.max_field_size = 100 * 1024 * 1024 # Also increase field size limit
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize connections and collections on startup."""
+    # --- REMOVING temporary disable block ---
     try:
         # Ensure Milvus connection
         ensure_connection()
@@ -56,6 +64,8 @@ async def lifespan(app: FastAPI):
         logger.info("Initialized Milvus connection and collection 🚀")
     except Exception as e:
         logger.error(f"Failed to initialize Milvus: {str(e)}")
+    # logger.warning("Milvus initialization temporarily disabled for debugging.") # Ensure this line is commented or removed
+    # --- End temporary disable ---
     
     yield  # App is running here
     
@@ -67,8 +77,16 @@ app = FastAPI(
     title="VibeRAG API",
     description="Streaming chat with your docs—4090's cooking! 🔥",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    # docs_url=None,  # Optional: Disable default /docs
+    # redoc_url=None, # Optional: Disable default /redoc
+    # openapi_url="/api/v1/openapi.json" # Optional: Set custom OpenAPI URL
 )
+logger.info("FastAPI app instance created.")
+
+# --- Main API Router ---
+# All routes will be defined on this router
+api_router = APIRouter()
 
 # Enable CORS for frontend
 app.add_middleware(
@@ -80,15 +98,11 @@ app.add_middleware(
 )
 
 # Constants
-STORAGE_DIR = Path("storage/documents") # This path might need adjustment depending on where the app runs vs. where storage/ is. Assuming CWD is project root for now.
-STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+STORAGE_DIR = Path("storage/documents") # <-- Uncomment storage dir path
+STORAGE_DIR.mkdir(parents=True, exist_ok=True) # <-- Uncomment mkdir
 
 # Initialize services
 # chat_service = ChatService( # Commented out - remove later
-#     model=CONFIG.chat.model,
-#     provider=CONFIG.chat.provider,
-#     temperature=CONFIG.chat.temperature
-# )
 
 # Request/Response Models
 class ChatRequest(BaseModel):
@@ -173,12 +187,17 @@ class DocInfo(BaseModel):
     tags: List[str]
     metadata: Dict[str, Any]
 
-@app.get("/health")
+class MetadataUpdateRequest(BaseModel):
+    """Request model for updating document metadata."""
+    tags: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+@api_router.get("/health")
 def health_check():
     """Health check—system's vibing! 🎯"""
     return {"status": "healthy", "message": "4090's ready to shred! 🔥"}
 
-@app.post("/chat")
+@api_router.post("/chat")
 async def chat(request: ChatRequest):
     """Handle chat requests, supporting both streaming and non-streaming modes."""
 
@@ -240,7 +259,7 @@ async def chat(request: ChatRequest):
             logger.exception(f"Error processing non-streaming chat request: {e}")
             raise HTTPException(status_code=500, detail=f"An internal error occurred: {str(e)}")
 
-@app.get("/chat")
+@api_router.get("/chat")
 async def chat_get(
     query: str = Query(..., description="The query to search for"),
     filename: Optional[str] = Query(None, description="Optional filename to filter chunks"),
@@ -272,7 +291,7 @@ async def chat_get(
                 yield "data: {\"status\":\"connected\"}\n\n"
                 logging.info("SSE connection established, sent initial message")
                 
-                chat_generator = chat_service.chat_with_knowledge(
+                chat_generator = chat_with_knowledge(
                     query=query, 
                     filename=filename,
                     knowledge_only=knowledge_only,
@@ -284,30 +303,27 @@ async def chat_get(
                 async for data in chat_generator:
                     # Make sure data is properly formatted as valid JSON
                     try:
-                        # Verify it's valid JSON by parsing and re-serializing
-                        json_obj = json.loads(data)
-                        clean_json = json.dumps(json_obj)
-                        # Format according to SSE standards: "data: {JSON}\n\n"
-                        sse_message = f"data: {clean_json}\n\n"
+                        # Directly dump the data (assuming it's a dict) to a JSON string
+                        clean_json = json.dumps(data)
+                        # Format according to SSE standards: "data: {JSON}\\n\\n"
+                        sse_message = f"data: {clean_json}\\n\\n"
                         logging.info(f"Sending SSE message: {sse_message.strip()[:100]}...")
                         yield sse_message
-                    except json.JSONDecodeError as e:
-                        logging.error(f"Invalid JSON in stream: {data[:100]}..., Error: {str(e)}")
-                        error_message = f"data: {json.dumps({'error': 'Server error: Invalid response format'})}\n\n"
+                    except (TypeError, json.JSONDecodeError) as e: # Catch TypeError too
+                        logging.error(f"Error processing or serializing data: {data}, Error: {str(e)}")
+                        error_message = f"data: {json.dumps({'error': 'Server error: Invalid response format from generator'})}\\n\\n"
                         logging.info(f"Sending error message: {error_message.strip()}")
                         yield error_message
 
-                # Add a final event to signal the end of the stream
-                end_message = "event: end\ndata: {}\n\n"
-                logging.info("Sending end event message")
-                yield end_message
                 logging.info("Stream ended normally")
             except Exception as e:
                 logging.error(f"Stream error: {str(e)}")
-                error_message = f"data: {json.dumps({'error': str(e)})}\n\n"
+                # Format the error message as a proper SSE event
+                error_event_data = {"type": "error", "data": str(e)}
+                error_message = f"data: {json.dumps(error_event_data)}\n\n"
                 logging.info(f"Sending exception error message: {error_message.strip()}")
                 yield error_message
-                yield "event: end\ndata: {}\n\n"
+                logging.info("Sent error event, stream ending due to error")
 
         # Ensure proper headers for SSE
         return StreamingResponse(
@@ -330,7 +346,7 @@ async def chat_get(
             content={"error": f"Unexpected error: {str(e)}"}
         )
 
-@app.options("/api/presentation")
+@api_router.options("/presentation")
 async def options_presentation():
     """Handle preflight CORS requests for the presentation endpoint."""
     return JSONResponse(
@@ -343,7 +359,7 @@ async def options_presentation():
         }
     )
 
-@app.post("/api/presentation", response_model=PresentationResponse)
+@api_router.post("/presentation", response_model=PresentationResponse)
 async def generate_presentation(request: PresentationRequest) -> PresentationResponse:
     """Generate a presentation based on the provided prompt."""
     logger.info(f"Presentation request incoming for '{request.prompt}'—slides gonna be lit! 🚀")
@@ -380,7 +396,7 @@ async def generate_presentation(request: PresentationRequest) -> PresentationRes
             }
         )
 
-@app.post("/research", response_model=ResearchResponse)
+@api_router.post("/research", response_model=ResearchResponse)
 async def research(request: ResearchRequest) -> ResearchResponse:
     """Generate a research report based on the provided query."""
     logger.info(f"Research request incoming for '{request.query}'—knowledge synthesis time! 🔬")
@@ -394,7 +410,7 @@ async def research(request: ResearchRequest) -> ResearchResponse:
         logger.error(f"Research generation failed: {str(e)} 😅")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/get_pdf/{filename}")
+@api_router.get("/get_pdf/{filename}")
 async def get_pdf(filename: str):
     """Serve a PDF file from the storage directory."""
     try:
@@ -416,7 +432,7 @@ async def get_pdf(filename: str):
             detail=f"Error serving PDF: {str(e)}"
         )
 
-@app.post("/upload", response_model=UploadResponse)
+@api_router.post("/upload", response_model=UploadResponse)
 async def upload_file(
     file: UploadFile = File(...),
     tags: str = Form("[]"),  # JSON string of tags
@@ -453,16 +469,17 @@ async def upload_file(
             metadata=metadata_dict
         )
         
+        logger.info(f"File {file.filename} uploaded successfully with {result['num_chunks']} chunks.")
         return UploadResponse(**result)
         
     except Exception as e:
-        logger.error(f"Upload failed for {file.filename}: {str(e)}")
+        logger.exception(f"Error processing file {file.filename}: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Upload failed: {str(e)}"
+            detail=f"Error processing file: {str(e)}"
         )
 
-@app.delete("/delete/{filename}", response_model=DeleteResponse)
+@api_router.delete("/delete/{filename}", response_model=DeleteResponse)
 async def delete_file(filename: str):
     """Delete a document and its chunks from storage and Milvus."""
     logger.info(f"Delete request incoming for {filename}—cleanup time! 🧹")
@@ -480,13 +497,13 @@ async def delete_file(filename: str):
             message=f"Successfully deleted {filename}"
         )
     except Exception as e:
-        logger.error(f"Delete failed for {filename}: {str(e)}")
+        logger.exception(f"Delete failed for {filename}: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Delete failed: {str(e)}"
         )
 
-@app.get("/list", response_model=List[DocInfo])
+@api_router.get("/list", response_model=List[DocInfo])
 async def list_documents():
     """List all available documents."""
     try:
@@ -522,13 +539,13 @@ async def list_documents():
         return list(docs.values())
         
     except Exception as e:
-        logger.error(f"Failed to list documents: {str(e)}")
+        logger.exception("Error listing documents")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to list documents: {str(e)}"
+            detail="Failed to list documents"
         )
 
-@app.get("/api/config")
+@api_router.get("/config")
 async def get_config():
     """Get the current configuration."""
     try:
@@ -554,10 +571,10 @@ async def get_config():
             }
         }
     except Exception as e:
-        logger.error(f"Failed to get config: {str(e)}")
+        logger.exception("Error fetching configuration")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to get config: {str(e)}"
+            detail="Failed to fetch configuration"
         )
 
 class ConfigUpdate(BaseModel):
@@ -567,7 +584,7 @@ class ConfigUpdate(BaseModel):
     ollama: Dict[str, Any]
     milvus: Dict[str, Any]
 
-@app.post("/api/config")
+@api_router.post("/config")
 async def update_config(config: ConfigUpdate):
     """Update the configuration."""
     try:
@@ -593,23 +610,15 @@ async def update_config(config: ConfigUpdate):
             
         CONFIG.openai.base_url = config.openai.get("base_url", CONFIG.openai.base_url)
         
-        # Reinitialize services with new config
-        global chat_service
-        chat_service = ChatService(
-            model=CONFIG.chat.model,
-            provider=CONFIG.chat.provider,
-            temperature=CONFIG.chat.temperature
-        )
-        
         return {"message": "Configuration updated successfully"}
     except Exception as e:
-        logger.error(f"Failed to update config: {str(e)}")
+        logger.exception("Error updating configuration")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to update config: {str(e)}"
+            detail="Failed to update configuration"
         )
 
-@app.get("/api/providers/ollama/status")
+@api_router.get("/providers/ollama/status")
 async def get_ollama_status():
     """Check if Ollama is online and list available models."""
     try:
@@ -647,7 +656,7 @@ async def get_ollama_status():
             detail=f"Failed to check Ollama status: {str(e)}"
         )
 
-@app.post("/api/providers/ollama/load")
+@api_router.post("/providers/ollama/load")
 async def load_ollama_model(model_name: str = Form(...)):
     """Load an Ollama model if it's not already loaded."""
     try:
@@ -675,70 +684,137 @@ async def load_ollama_model(model_name: str = Form(...)):
             detail=f"Failed to load Ollama model: {str(e)}"
         )
 
-@app.get("/api/providers/openai/models")
+@api_router.get("/providers/openai/models")
 async def get_openai_models():
     """List available OpenAI models."""
+    logger.info("--- ENTERED /providers/openai/models --- ") # Log entry
     try:
         # Check if API key is available
-        api_key = os.environ.get("OPENAI_API_KEY", CONFIG.openai.api_key)
+        # Prioritize environment variable, fallback to config object
+        api_key_env = os.environ.get("OPENAI_API_KEY")
+        api_key_conf = CONFIG.openai.api_key # Assuming config loads it
+        api_key = api_key_env or api_key_conf
+        
+        # Log presence and source (mask the actual key)
+        key_status = "Key FOUND" if api_key else "Key NOT FOUND"
+        key_source = "(from ENV)" if api_key_env else "(from CONFIG)" if api_key_conf else "(not found)"
+        logger.info(f"OpenAI Key Check: Status={key_status}, Source={key_source}, Length={len(api_key) if api_key else 0}")
+        
         if not api_key:
+            logger.warning("OpenAI API key was not found. Returning error response.")
             return {
                 "error": "OpenAI API key not configured",
                 "models": []
             }
             
-        # Get OpenAI client
-        from generation.generate import get_openai_client
+        # Get OpenAI client - Move import here to ensure it's only done if key exists
+        from src.modules.generation.generate import get_openai_client 
         try:
-            client = get_openai_client()
-            models_response = await client.models.list()
-            
-            # Filter for chat models that work with our application
-            compatible_models = []
-            for model in models_response.data:
-                model_id = model.id
-                if (
-                    "gpt" in model_id.lower() or  # GPT models
-                    "text-embedding" in model_id.lower() or  # Embedding models
-                    "claude" in model_id.lower()  # Claude models if available
-                ):
-                    compatible_models.append(model_id)
-                    
+            logger.info("Attempting to get OpenAI client...")
+            client = get_openai_client() # This might raise ValueError on invalid format
+            logger.info(f"OpenAI client obtained. Base URL: {client.base_url}")
+            logger.info("Attempting to list OpenAI models via client.models.list()...")
+            models_list = await client.models.list()
+            logger.info("Successfully listed OpenAI models.")
+
+            # 1. Create the full list of models, sorted by creation date
+            all_models_data = sorted(
+                [{"id": model.id, "created": model.created} for model in models_list.data],
+                key=lambda x: x["created"],
+                reverse=True
+            )
+            logger.info(f"Found {len(all_models_data)} total models from OpenAI.")
+
+            # 2. Filter for likely compatible text generation models
+            compatible_models_data = []
+            exclusion_terms = ["embedding", "image", "audio", "vision", "instruct", "whisper", "tts", "dall-e", "edit"]
+            for model in models_list.data:
+                model_id_lower = model.id.lower()
+                # Keep if it contains 'gpt' and doesn't contain any exclusion terms
+                if "gpt" in model_id_lower and not any(term in model_id_lower for term in exclusion_terms):
+                    compatible_models_data.append({"id": model.id, "created": model.created})
+
+            # Sort compatible models by creation date
+            compatible_models_data.sort(key=lambda x: x["created"], reverse=True)
+            logger.info(f"Found {len(compatible_models_data)} likely compatible text models.")
+
+            # 3. Determine the suggested default model ID
+            suggested_default_model_id = CONFIG.openai.default_model # Use configured default as fallback
+            if compatible_models_data:
+                suggested_default_model_id = compatible_models_data[0]["id"]
+                logger.info(f"Suggested default model (newest compatible): {suggested_default_model_id}")
+            else:
+                logger.warning(f"No compatible text models found based on filtering. Using configured default: {suggested_default_model_id}")
+
+            # 4. Return both lists
             return {
-                "models": compatible_models
+                "all_models": all_models_data,
+                "suggested_default": suggested_default_model_id
             }
-        except Exception as e:
-            logger.error(f"Failed to list OpenAI models: {str(e)}")
+
+        except ValueError as ve:
+            # Log the specific exception from the OpenAI client init or API call
+            logger.error(f"Failed during OpenAI client init or API call: {type(ve).__name__} - {str(ve)}", exc_info=True)
             return {
-                "error": str(e),
+                "error": f"Failed during OpenAI client init or API call: {str(ve)}",
                 "models": []
             }
     except Exception as e:
-        logger.error(f"Error listing OpenAI models: {str(e)}")
+        # Log errors happening even before checking the key (less likely now)
+        logger.error(
+            f"Unexpected error in /providers/openai/models handler: {type(e).__name__} - {str(e)}", 
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to list OpenAI models: {str(e)}"
+            detail=f"Unexpected error processing OpenAI models request: {str(e)}"
+        )
+
+@api_router.put("/documents/{filename}/metadata", status_code=200)
+async def update_document_metadata(filename: str, update_data: MetadataUpdateRequest):
+    """Update tags and metadata for a specific document in Milvus."""
+    logger.info(f"Metadata update request for {filename}.")
+    
+    if update_data.tags is None and update_data.metadata is None:
+        raise HTTPException(
+            status_code=400, 
+            detail="No update data provided (tags or metadata must be present)."
+        )
+    
+    try:
+        # Call the actual update function
+        success = update_metadata_in_vector_store(
+            filename=filename, 
+            tags=update_data.tags, 
+            metadata=update_data.metadata
+        )
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update metadata in vector store.")
+        
+        return {"message": f"Metadata for {filename} updated successfully."}
+        
+    except HTTPException as http_exc:
+        # Re-raise HTTP exceptions
+        raise http_exc
+    except Exception as e:
+        logger.exception(f"Failed to update metadata for {filename}: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"An internal error occurred while updating metadata: {str(e)}"
         )
 
 # Types locked—code's sharp as fuck! 🔥
 
+# Include the router with the desired prefix
+app.include_router(api_router, prefix="/api/v1")
+logger.info("API router included.")
+
 if __name__ == "__main__":
-    def is_port_in_use(port):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            return s.connect_ex(('127.0.0.1', port)) == 0
-    
-    # Get host and port from environment variables or use defaults
-    host = os.getenv("BACKEND_HOST", "0.0.0.0")
-    default_port = int(os.getenv("BACKEND_PORT", "8000"))
-    
-    # Check if the configured port is available, otherwise increment
-    port = default_port
-    if is_port_in_use(port):
-        logger.warning(f"Port {port} is already in use. Trying port {port+1}...")
-        port = port + 1
-        if is_port_in_use(port):
-            logger.warning(f"Port {port} is also in use. Trying port {port+1}...")
-            port = port + 1
-    
-    logger.info(f"Starting server on {host}:{port}...")
-    uvicorn.run(app, host=host, port=port) 
+    # The Dockerfile CMD specifies host and port. 
+    # Keep this block minimal for direct execution if needed, but 
+    # the primary execution path via Docker uses the CMD directive.
+    logger.info("Starting server via __main__ block (intended for direct execution)... Host/Port set by Docker CMD when run in container.")
+    # Simplified run for direct execution case, relying on uvicorn defaults or CLI args if run directly.
+    # Docker execution will use CMD ["uvicorn", ..., "--host", "0.0.0.0", "--port", "8000"]
+    uvicorn.run("src.api.app:app", reload=True) # Added reload for potential direct dev use 

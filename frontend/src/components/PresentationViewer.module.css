@@ -62,12 +62,21 @@
     padding: 1.5rem;
     border-radius: 8px;
     border: 1px solid rgba(0, 150, 255, 0.2);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: flex-end;
 }
 
 .inputGroup {
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-sm);
+    flex-grow: 1;
+}
+
+.inputLabel {
+    display: block;
+    margin-bottom: 0.3rem;
+    color: var(--text-color-secondary);
+    font-size: 0.9rem;
 }
 
 .input {
@@ -329,6 +338,42 @@
     margin-top: var(--spacing-sm);
     text-align: center;
     font-family: var(--font-body);
+}
+
+.modelSelector {
+    /* Adjust if needed based on flex layout */
+}
+
+/* Style for Download Button */
+.downloadButton {
+    background-color: var(--accent-color-secondary);
+    color: white;
+    padding: 0.6rem 1.2rem;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: background-color 0.2s ease;
+    margin-bottom: 1rem;
+}
+
+.downloadButton:hover {
+    opacity: 0.9;
+}
+
+.downloadButton:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.error {
+    color: #ff4d4d;
+    background-color: rgba(255, 0, 0, 0.1);
+    border: 1px solid rgba(255, 0, 0, 0.2);
+    padding: 0.8rem;
+    border-radius: 4px;
+    margin: 1rem 0;
+    font-size: 0.9rem;
 }
 
 @media (max-width: 768px) {

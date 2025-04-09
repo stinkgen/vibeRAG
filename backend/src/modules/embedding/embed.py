@@ -12,7 +12,7 @@ import numpy as np
 import torch
 # from sentence_transformers import SentenceTransformer # No longer needed here
 from src.modules.config.config import CONFIG
-from src.modules.embedding.service import get_embedding_model # Import the service function
+from src.modules.embedding.service import get_embedding_model, EmbeddingService
 
 # Configure logging
 logging.basicConfig(
@@ -92,7 +92,9 @@ def embed_chunks(chunks: Union[List[str], List[Dict[str, Any]]]) -> List[Dict[st
             chunk_objects[i]['embedding'] = embedding
         
         elapsed_time = time.time() - start_time
-        logger.info(f"Embedded {total_chunks} chunks in {elapsed_time:.2f} seconds using {model.config.name_or_path} on device {device} 🎯") # Use model name from loaded model
+        # Get the model name from the service singleton
+        embedding_service = EmbeddingService.get_instance()
+        logger.info(f"Embedded {total_chunks} chunks in {elapsed_time:.2f} seconds using {embedding_service.model_name} on device {device} 🎯") # Use model name from service
         
         return chunk_objects
         

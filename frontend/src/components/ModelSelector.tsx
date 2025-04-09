@@ -16,8 +16,14 @@ interface OllamaStatusResponse {
   error?: string;
 }
 
-interface OpenAIModelsResponse {
-  models: string[];
+interface OpenAIModelData {
+  id: string;
+  created: number;
+}
+
+interface OpenAIModelsApiResponse {
+  all_models: OpenAIModelData[];
+  suggested_default: string;
   error?: string;
 }
 
@@ -28,26 +34,30 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   onModelChange
 }) => {
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
-  const [openaiModels, setOpenaiModels] = useState<string[]>([]);
+  const [openaiModels, setOpenaiModels] = useState<OpenAIModelData[]>([]);
   const [loading, setLoading] = useState(false);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatusResponse | null>(null);
 
   useEffect(() => {
     const checkProviders = async () => {
-      // Check Ollama status
+      setLoading(true);
       try {
         const response = await axios.get<OllamaStatusResponse>(API_ENDPOINTS.OLLAMA_STATUS);
         setOllamaStatus(response.data);
+        if (response.data.online && response.data.models) {
+          setOllamaModels(response.data.models);
+        }
       } catch (error) {
         console.error('Failed to check Ollama status:', error);
       }
 
-      // Check OpenAI models
       try {
-        const response = await axios.get<OpenAIModelsResponse>(API_ENDPOINTS.OPENAI_MODELS);
-        setOpenaiModels(response.data.models || []);
+        const response = await axios.get<OpenAIModelsApiResponse>(API_ENDPOINTS.OPENAI_MODELS);
+        setOpenaiModels(response.data.all_models || []);
       } catch (error) {
         console.error('Failed to get OpenAI models:', error);
+      } finally {
+        setLoading(false);
       }
     };
 
@@ -64,7 +74,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             onChange={(e) => onProviderChange(e.target.value)}
             className={styles.select}
           >
-            <option value="ollama">Ollama</option>
+            {ollamaStatus?.online && <option value="ollama">Ollama</option>}
             <option value="openai">OpenAI</option>
           </select>
         </label>
@@ -77,28 +87,32 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             value={model}
             onChange={(e) => onModelChange(e.target.value)}
             className={styles.select}
-            disabled={loading}
+            disabled={loading || (provider === 'ollama' && !ollamaStatus?.online)}
           >
             {loading ? (
               <option value="">Loading models...</option>
             ) : provider === 'ollama' ? (
               ollamaModels.length > 0 ? (
-                ollamaModels.map((model) => (
-                  <option key={model} value={model}>
-                    {model}
+                ollamaModels.map((ollamaModel) => (
+                  <option key={ollamaModel} value={ollamaModel}>
+                    {ollamaModel}
                   </option>
                 ))
               ) : (
-                <option value={model}>{model || 'No models available'}</option>
+                ollamaStatus?.online ?
+                <option value="">No Ollama models found</option> :
+                <option value="">Ollama offline</option>
               )
-            ) : openaiModels.length > 0 ? (
-              openaiModels.map((model) => (
-                <option key={model} value={model}>
-                  {model}
-                </option>
-              ))
             ) : (
-              <option value={model}>{model || 'No models available'}</option>
+              openaiModels.length > 0 ? (
+                openaiModels.map((openaiModel) => (
+                  <option key={openaiModel.id} value={openaiModel.id}>
+                    {openaiModel.id}
+                  </option>
+                ))
+              ) : (
+                <option value="">No OpenAI models available</option>
+              )
             )}
           </select>
         </label>

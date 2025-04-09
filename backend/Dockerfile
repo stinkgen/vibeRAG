@@ -4,6 +4,12 @@ FROM python:3.12-slim
 # Set the working directory in the container
 WORKDIR /app
 
+# Install system dependencies required by libraries like OpenCV (cv2)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install uv
 RUN pip install uv
 
@@ -28,5 +34,8 @@ EXPOSE 8000
 
 # Define the command to run the application
 # The host 0.0.0.0 makes it accessible from outside the container
-# Port is hardcoded here but can be overridden by env var in docker-compose
-CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000"] 
+# Use debug logging for more insight
+CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "debug"]
+
+# --- DIAGNOSTIC CMD: Run simple HTTP server instead of Uvicorn --- 
+# CMD ["python", "-m", "http.server", "8000", "--bind", "0.0.0.0"] 

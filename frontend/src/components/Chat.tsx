@@ -3,6 +3,7 @@ import axios from 'axios';
 import styles from './Chat.module.css';
 import KnowledgeFilter from './KnowledgeFilter';
 import API_ENDPOINTS from '../config/api';
+import { ModelSelector } from './ModelSelector';
 
 // Brain SVG component - keeping it raw and minimal
 const BrainIcon = () => (
@@ -57,19 +58,30 @@ interface ConfigState {
   };
 }
 
-// System prompt with more in-depth response instruction
-const SYSTEM_PROMPT = `You are an AI assistant providing in-depth, comprehensive, and thoughtful responses. 
-When answering questions, include relevant context, examples, and explanations. 
-Be thorough in your analysis while maintaining clarity and structure.
-If using knowledge from documents, synthesize and integrate this information to provide a complete picture.
-When appropriate, consider different perspectives and potential implications of the information.`;
-
 // Add interface for filter option
 interface FilterOption {
   id: string;
   name: string;
   type: 'file' | 'collection' | 'tag';
 }
+
+// Add interface for the OpenAI Models API Response to use in Chat.tsx
+interface OpenAIModelData {
+  id: string;
+  created: number;
+}
+interface OpenAIModelsApiResponse {
+  all_models: OpenAIModelData[];
+  suggested_default: string;
+  error?: string;
+}
+
+// System prompt with more in-depth response instruction
+const SYSTEM_PROMPT = `You are an AI assistant providing in-depth, comprehensive, and thoughtful responses. 
+When answering questions, include relevant context, examples, and explanations. 
+Be thorough in your analysis while maintaining clarity and structure.
+If using knowledge from documents, synthesize and integrate this information to provide a complete picture.
+When appropriate, consider different perspectives and potential implications of the information.`;
 
 const Chat: React.FC = () => {
   const [query, setQuery] = useState('');
@@ -99,13 +111,24 @@ const Chat: React.FC = () => {
   const saveTimeoutRef = useRef<number | null>(null);
   const lastSavedMessagesRef = useRef<string>('');
   
-  // Configuration
-  const [config, setConfig] = useState<ConfigState>({
-    chat: {
-      model: '',
-      provider: '',
-      temperature: 0.7
+  // ADD NEW modelConfig state
+  const [modelConfig, setModelConfig] = useState<{ provider: string; model: string }>(() => {
+    const savedConfig = localStorage.getItem('vibeRAG_modelConfig');
+    if (savedConfig) {
+      try {
+        const parsedConfig = JSON.parse(savedConfig);
+        // Basic validation
+        if (parsedConfig && typeof parsedConfig.provider === 'string' && typeof parsedConfig.model === 'string') {
+            console.log("Loaded model config from localStorage:", parsedConfig);
+            return parsedConfig;
+        }
+      } catch (e) {
+        console.error("Failed to parse saved model config from localStorage:", e);
+      }
     }
+    // Return a temporary default if nothing valid is found in localStorage
+    console.log("No valid model config in localStorage, using temporary default.");
+    return { provider: 'openai', model: 'gpt-4' }; // Temporary placeholder
   });
 
   // Add state for knowledge filters
@@ -172,13 +195,10 @@ const Chat: React.FC = () => {
         
         // Also restore the model settings if they exist
         if (history.modelProvider || history.modelName) {
-          setConfig(prev => ({
+          setModelConfig(prev => ({
             ...prev,
-            chat: {
-              ...prev.chat,
-              provider: history.modelProvider || prev.chat.provider,
-              model: history.modelName || prev.chat.model
-            }
+            provider: history.modelProvider || prev.provider,
+            model: history.modelName || prev.model
           }));
           console.log(`Restored model settings:`, {
             provider: history.modelProvider || 'default',
@@ -270,8 +290,8 @@ const Chat: React.FC = () => {
               ...history, 
               messages: messagesForStorage, 
               date: new Date().toISOString(),
-              modelProvider: config.chat.provider,
-              modelName: config.chat.model
+              modelProvider: modelConfig.provider,
+              modelName: modelConfig.model
             }
           : history
       ));
@@ -284,15 +304,15 @@ const Chat: React.FC = () => {
         title,
         date: new Date().toISOString(),
         messages: messagesForStorage,
-        modelProvider: config.chat.provider,
-        modelName: config.chat.model
+        modelProvider: modelConfig.provider,
+        modelName: modelConfig.model
       };
       
       setChatHistories(prev => [...prev, newHistory]);
       setActiveHistoryId(newHistoryId);
       console.log(`Created new chat history: ${newHistoryId}`);
     }
-  }, [messages, activeHistoryId, config]);
+  }, [messages, activeHistoryId, modelConfig]);
   
   // Function to start a new chat
   const startNewChat = () => {
@@ -446,18 +466,15 @@ const Chat: React.FC = () => {
   useEffect(() => {
     const fetchConfig = async () => {
       try {
-        const { data } = await axios.get(API_ENDPOINTS.CONFIG);
-        // Only update if we don't have a saved config
-        if (!config.chat.model || !config.chat.provider) {
-          setConfig(data as ConfigState);
-        }
+        const response = await axios.get<ConfigState>(API_ENDPOINTS.CONFIG); // Fetch general config if needed
+        // You might use parts of this config, but modelConfig state handles the model selection
+        console.log("Fetched general config:", response.data);
       } catch (error) {
-        console.error('Failed to fetch config:', error);
+        console.error('Failed to load general config:', error);
       }
     };
-    
     fetchConfig();
-  }, [config.chat.model, config.chat.provider]);
+  }, []);
   
   // Cleanup function for EventSource
   useEffect(() => {
@@ -495,6 +512,33 @@ const Chat: React.FC = () => {
       console.error("Error loading knowledge filters:", err);
     }
   }, []);
+
+  // --- MODIFICATION START: Effect to set default model if not loaded from localStorage ---
+  useEffect(() => {
+    const savedConfig = localStorage.getItem('vibeRAG_modelConfig');
+    if (!savedConfig) {
+      console.log("No model config in localStorage, fetching suggested default...");
+      const fetchSuggestedDefault = async () => {
+        try {
+          const response = await axios.get<OpenAIModelsApiResponse>(API_ENDPOINTS.OPENAI_MODELS);
+          if (response.data && response.data.suggested_default) {
+            const suggestedConfig = { provider: 'openai', model: response.data.suggested_default };
+            console.log("Setting model config to suggested default:", suggestedConfig);
+            setModelConfig(suggestedConfig);
+            localStorage.setItem('vibeRAG_modelConfig', JSON.stringify(suggestedConfig));
+          } else {
+            console.warn("API did not return a suggested default model.");
+            // Keep the temporary default set in useState if API fails
+          }
+        } catch (error) {
+          console.error('Failed to fetch suggested default OpenAI model:', error);
+          // Keep the temporary default set in useState if API fails
+        }
+      };
+      fetchSuggestedDefault();
+    }
+  }, []); // Run only once on mount
+  // --- MODIFICATION END ---
 
   // Refactored function to handle form submission (includes streaming logic)
   const handleSubmit = async (e?: React.FormEvent) => {
@@ -535,8 +579,8 @@ const Chat: React.FC = () => {
       knowledge_only: knowledgeOnly.toString(),
       use_web: useWeb.toString(),
       stream: 'true', // Backend handles streaming
-      ...(config.chat.provider !== 'default' && config.chat.model ? { model: config.chat.model } : {}),
-      ...(config.chat.provider !== 'default' ? { provider: config.chat.provider } : {}),
+      ...(modelConfig.provider !== 'default' && modelConfig.model ? { model: modelConfig.model } : {}),
+      ...(modelConfig.provider !== 'default' ? { provider: modelConfig.provider } : {}),
       ...(filename ? { filename: filename } : {})
     });
 
@@ -731,28 +775,26 @@ const Chat: React.FC = () => {
     textarea.style.height = `${Math.min(scrollHeight, 100)}px`;
   };
 
-  // Add this handler function with the other handlers
-  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = e.target.value;
-    const [provider, model] = value.split(' [');
-    const cleanModel = model.replace(']', '');
-    
-    const newConfig = {
-      ...config,
-      chat: {
-        ...config.chat,
-        provider,
-        model: cleanModel
-      }
-    };
-    
-    setConfig(newConfig);
-    
-    // Save to localStorage
+  // --- MODIFICATION START: Update handlers passed to ModelSelector ---
+  const handleProviderChange = (newProvider: string) => {
+    // Determine a sensible default model for the new provider
+    // We could fetch defaults per provider, but hardcoding is simpler for now.
+    // Let ModelSelector handle fetching its own list based on the new provider.
+    const defaultModel = newProvider === 'openai' ? 'gpt-4o' : 'llama3'; // TODO: Improve default selection?
+    const newConfig = { provider: newProvider, model: defaultModel }; // Reset model when provider changes
+    console.log(`Provider changed to ${newProvider}, resetting model to ${defaultModel}`);
+    setModelConfig(newConfig);
     localStorage.setItem('vibeRAG_modelConfig', JSON.stringify(newConfig));
-    
-    console.log(`Model changed to: ${cleanModel} (${provider})`);
   };
+
+  const handleModelUpdate = (newModel: string) => {
+    // Provider remains the same, just update the model
+    const newConfig = { ...modelConfig, model: newModel };
+    console.log(`Model updated to ${newModel} for provider ${modelConfig.provider}`);
+    setModelConfig(newConfig);
+    localStorage.setItem('vibeRAG_modelConfig', JSON.stringify(newConfig));
+  };
+  // --- MODIFICATION END ---
 
   return (
     <div className={styles.container}>
@@ -974,21 +1016,12 @@ const Chat: React.FC = () => {
         </div>
         
         <div className={styles.inputGroup}>
-          <select 
-            className={styles.modelSelect}
-            value={`${config.chat.provider} [${config.chat.model}]`}
-            disabled={false}
-            onChange={handleModelChange}
-          >
-            <option value={`${config.chat.provider} [${config.chat.model}]`}>
-              {`${config.chat.provider.toUpperCase()} [${config.chat.model}]`}
-            </option>
-            <option value="openai [gpt-4]">OPENAI [GPT-4]</option>
-            <option value="openai [gpt-3.5-turbo]">OPENAI [GPT-3.5-TURBO]</option>
-            <option value="anthropic [claude-3-opus]">ANTHROPIC [CLAUDE-3-OPUS]</option>
-            <option value="anthropic [claude-3-sonnet]">ANTHROPIC [CLAUDE-3-SONNET]</option>
-            <option value="ollama [llama3]">OLLAMA [LLAMA3]</option>
-          </select>
+          <ModelSelector
+              provider={modelConfig.provider}
+              model={modelConfig.model}
+              onProviderChange={handleProviderChange}
+              onModelChange={handleModelUpdate}
+          />
         </div>
       </div>
       

@@ -85,8 +85,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "${FRONTEND_PORT:-3000}:80" # Map host port to Nginx container port 80
-    # No depends_on needed usually, Nginx serves static files
-    # If Nginx needs to proxy to backend, add depends_on: [backend]
+    depends_on:
+      - backend # Ensures backend starts before frontend Nginx (for proxying)
     networks:
       - default
 

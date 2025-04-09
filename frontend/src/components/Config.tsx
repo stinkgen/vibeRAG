@@ -328,8 +328,8 @@ const Config: React.FC = () => {
             {ollamaStatus.models.length > 0 ? (
               <ul>
                 {ollamaStatus.models.map(m => <li key={m}>{m}</li>)}
-              </ul>
-            ) : (
+                </ul>
+              ) : (
               <p>No models loaded or Ollama offline.</p>
             )}
           </div>

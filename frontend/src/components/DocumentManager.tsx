@@ -20,6 +20,13 @@ interface UploadResponse {
     status: string;
 }
 
+// Add Edit Modal specific type
+interface EditingDocState extends DocInfo {
+    // Add separate fields for editing to avoid modifying original 'docs' state directly
+    editingTags: string; // Comma-separated string for editing
+    editingMetadata: { key: string; value: string }[]; // Array of key-value pairs for editing
+}
+
 const DocumentIcon = () => (
     <svg 
         className={styles.documentIcon}
@@ -62,6 +69,12 @@ const DocumentManager: React.FC = () => {
     // Ref for file input
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    // Add state for edit modal
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [editingDoc, setEditingDoc] = useState<EditingDocState | null>(null);
+    const [editLoading, setEditLoading] = useState(false);
+    const [editError, setEditError] = useState<string | null>(null);
+
     // Load docs on mount
     useEffect(() => {
         fetchDocs();
@@ -69,8 +82,11 @@ const DocumentManager: React.FC = () => {
 
     // Fetch all docs from the backend
     const fetchDocs = async () => {
+        setLoading(true); // Indicate loading state
+        setError(null);
         try {
-            const response = await axios.get(API_ENDPOINTS.LIST_DOCUMENTS);
+            // Use the corrected endpoint name: DOCUMENTS
+            const response = await axios.get(API_ENDPOINTS.DOCUMENTS); 
             // Ensure we're getting an array
             const docsData = Array.isArray(response.data) ? response.data : [];
             setDocs(docsData);
@@ -79,6 +95,8 @@ const DocumentManager: React.FC = () => {
             console.error('Failed to fetch docs:', error);
             setError('Failed to load docs, brah! Try refreshing 😅');
             setDocs([]); // Reset to empty array on error
+        } finally {
+            setLoading(false); // Turn off loading indicator
         }
     };
 
@@ -242,6 +260,102 @@ const DocumentManager: React.FC = () => {
         return String(value);
     };
 
+    // Handle opening the edit modal
+    const handleOpenEditModal = (doc: DocInfo) => {
+        setEditingDoc({
+            ...doc,
+            // Convert tags array to comma-separated string for easier editing
+            editingTags: doc.tags.join(', '),
+            // Convert metadata object to array of key-value pairs
+            editingMetadata: Object.entries(doc.metadata).map(([key, value]) => ({
+                key,
+                value: String(value) // Ensure value is string for input
+            }))
+        });
+        setIsEditModalOpen(true);
+        setEditError(null); // Clear previous errors
+    };
+
+    // Handle closing the edit modal
+    const handleCloseEditModal = () => {
+        setIsEditModalOpen(false);
+        setEditingDoc(null);
+        setEditLoading(false);
+        setEditError(null);
+    };
+
+    // Handle changes within the edit modal inputs
+    const handleEditInputChange = (
+        type: 'tags' | 'metadata',
+        index: number | null,
+        field: 'key' | 'value' | null,
+        value: string
+    ) => {
+        if (!editingDoc) return;
+
+        if (type === 'tags') {
+            setEditingDoc({ ...editingDoc, editingTags: value });
+        } else if (type === 'metadata' && index !== null && field) {
+            const updatedMetadata = [...editingDoc.editingMetadata];
+            updatedMetadata[index] = { ...updatedMetadata[index], [field]: value };
+            setEditingDoc({ ...editingDoc, editingMetadata: updatedMetadata });
+        }
+    };
+    
+    // Add a new metadata field in the modal
+    const handleAddMetadataField = () => {
+        if (!editingDoc) return;
+        setEditingDoc({
+            ...editingDoc,
+            editingMetadata: [...editingDoc.editingMetadata, { key: '', value: '' }]
+        });
+    };
+
+    // Remove a metadata field in the modal
+    const handleRemoveMetadataField = (index: number) => {
+        if (!editingDoc) return;
+        const updatedMetadata = editingDoc.editingMetadata.filter((_, i) => i !== index);
+        setEditingDoc({ ...editingDoc, editingMetadata: updatedMetadata });
+    };
+
+    // Handle saving metadata changes
+    const handleSaveMetadata = async () => {
+        if (!editingDoc) return;
+
+        setEditLoading(true);
+        setEditError(null);
+
+        // Prepare data for the backend
+        const updatedTags = editingDoc.editingTags.split(',').map(t => t.trim()).filter(t => t);
+        const updatedMetadata = editingDoc.editingMetadata.reduce((acc, item) => {
+            if (item.key.trim()) { // Only include items with a key
+                acc[item.key.trim()] = item.value;
+            }
+            return acc;
+        }, {} as Record<string, string>);
+
+        try {
+            await axios.put(
+                API_ENDPOINTS.UPDATE_DOCUMENT_METADATA(editingDoc.filename),
+                {
+                    tags: updatedTags,
+                    metadata: updatedMetadata
+                }
+            );
+            
+            handleCloseEditModal(); // Close modal on success
+            await fetchDocs(); // Refresh the document list
+            setSuccessMessage(`Metadata for ${editingDoc.filename} updated!`); // Show success message
+            setTimeout(() => setSuccessMessage(null), 3000);
+
+        } catch (error: any) {
+            console.error('Failed to update metadata:', error);
+            setEditError(error.response?.data?.detail || 'Failed to save metadata. Please try again.');
+        } finally {
+            setEditLoading(false);
+        }
+    };
+
     // Render document list or grid
     const renderDocuments = () => {
         if (sortedDocs.length === 0) {
@@ -263,17 +377,36 @@ const DocumentManager: React.FC = () => {
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className={styles.documentLink}
+                                    title={`Open ${doc.filename}`}
                                 >
                                     {truncateString(doc.filename, 25)}
                                 </a>
                             </h3>
-                            <button
-                                onClick={() => handleDelete(doc.filename)}
-                                className={styles.deleteButton}
-                                title="Delete document"
-                            >
-                                🗑️
-                            </button>
+                            <div className={styles.actionButtons}>
+                                <a 
+                                    href={API_ENDPOINTS.GET_DOCUMENT(doc.filename)} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer" 
+                                    className={styles.viewButton}
+                                    title="View document"
+                                >
+                                    👁️ 
+                                </a>
+                                <button
+                                    onClick={() => handleOpenEditModal(doc)}
+                                    className={styles.editButton}
+                                    title="Edit metadata"
+                                >
+                                    ✏️
+                                </button>
+                                <button
+                                    onClick={() => handleDelete(doc.filename)}
+                                    className={styles.deleteButton}
+                                    title="Delete document"
+                                >
+                                    🗑️
+                                </button>
+                            </div>
                         </div>
 
                         {doc.tags.length > 0 && (
@@ -461,6 +594,68 @@ const DocumentManager: React.FC = () => {
                         {loading ? 'Uploading...' : 'Upload Doc 🚀'}
                     </button>
                 </form>
+            )}
+
+            {/* Edit Modal */} 
+            {isEditModalOpen && editingDoc && (
+                <div className={styles.modalOverlay}>
+                    <div className={styles.modalContent}>
+                        <h2>Edit Metadata for {editingDoc.filename}</h2>
+                        
+                        {editError && <div className={styles.modalError}>{editError}</div>}
+                        
+                        <div className={styles.modalSection}>
+                            <label>Tags (comma-separated)</label>
+                            <input 
+                                type="text"
+                                value={editingDoc.editingTags}
+                                onChange={(e) => handleEditInputChange('tags', null, null, e.target.value)}
+                                className={styles.modalInput}
+                            />
+                        </div>
+
+                        <div className={styles.modalSection}>
+                            <label>Metadata</label>
+                            {editingDoc.editingMetadata.map((item, index) => (
+                                <div key={index} className={styles.metadataEditRow}>
+                                    <input 
+                                        type="text"
+                                        placeholder="Key" 
+                                        value={item.key}
+                                        onChange={(e) => handleEditInputChange('metadata', index, 'key', e.target.value)}
+                                        className={styles.modalInput}
+                                    />
+                                    <input 
+                                        type="text"
+                                        placeholder="Value" 
+                                        value={item.value}
+                                        onChange={(e) => handleEditInputChange('metadata', index, 'value', e.target.value)}
+                                        className={styles.modalInput}
+                                    />
+                                    <button 
+                                        onClick={() => handleRemoveMetadataField(index)}
+                                        className={styles.modalRemoveButton}
+                                        title="Remove field"
+                                    >
+                                        &times;
+                                    </button>
+                                </div>
+                            ))}
+                            <button onClick={handleAddMetadataField} className={styles.modalAddButton}>
+                                + Add Metadata Field
+                            </button>
+                        </div>
+
+                        <div className={styles.modalActions}>
+                            <button onClick={handleCloseEditModal} className={styles.modalButtonCancel} disabled={editLoading}>
+                                Cancel
+                            </button>
+                            <button onClick={handleSaveMetadata} className={styles.modalButtonSave} disabled={editLoading}>
+                                {editLoading ? 'Saving...' : 'Save Changes'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

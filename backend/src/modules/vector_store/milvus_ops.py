@@ -253,11 +253,11 @@ def store_with_metadata(chunks: List[Dict], tags: List[str] = None, metadata: Di
     
     return doc_ids
 
-def delete_document(doc_id: str) -> bool:
+def delete_document(filename: str) -> bool:
     """Delete all chunks associated with a document.
 
     Args:
-        doc_id: Document ID or filename to delete
+        filename: Filename to delete
 
     Returns:
         bool: True if deletion was successful, False otherwise
@@ -272,37 +272,164 @@ def delete_document(doc_id: str) -> bool:
         collection = init_collection()
         collection.load()  # Ensure collection is loaded before querying
 
-        # Try to delete by doc_id first
-        expr = f'{CONFIG.milvus.doc_id_field} == "{doc_id}"'
+        # Try to delete by filename first
+        expr = f'{CONFIG.milvus.filename_field} == "{filename}"'
         results = collection.query(
             expr=expr,
             output_fields=[CONFIG.milvus.chunk_id_field],
             limit=1
         )
 
-        # If no results found, try by filename
+        # If no results found, document doesn't exist
         if len(results) == 0:
-            expr = f'{CONFIG.milvus.filename_field} == "{doc_id}"'
-            results = collection.query(
-                expr=expr,
-                output_fields=[CONFIG.milvus.chunk_id_field],
-                limit=1
-            )
-
-        # If still no results, document doesn't exist
-        if len(results) == 0:
-            logger.info(f"No chunks found for document: {doc_id}")
+            logger.info(f"No chunks found for filename: {filename}")
             return True
 
         # Delete all chunks for this document
         collection.delete(expr)
         collection.flush()  # Ensure deletion is persisted
-        logger.info(f"Deleted all chunks for document: {doc_id}")
+        logger.info(f"Deleted all chunks for filename: {filename}")
 
         return True
 
     except Exception as e:
-        logger.error(f"Failed to delete document {doc_id}: {str(e)}")
+        logger.error(f"Failed to delete document {filename}: {str(e)}")
+        return False
+
+def update_metadata_in_vector_store(
+    filename: str, 
+    tags: Optional[List[str]] = None, 
+    metadata: Optional[Dict[str, Any]] = None
+) -> bool:
+    """Update tags and metadata for all chunks associated with a specific filename.
+    
+    Note: Uses a Delete-then-Insert approach as Milvus doesn't support direct 
+    in-place updates for JSON/Array fields based on a filter.
+    
+    Args:
+        filename: The filename whose chunks' metadata should be updated.
+        tags: The new list of tags. If None, tags are not updated.
+        metadata: The new metadata dictionary. If None, metadata is not updated.
+        
+    Returns:
+        bool: True if the update process (delete + insert) succeeded, False otherwise.
+    """
+    if tags is None and metadata is None:
+        logger.warning("Update called with no changes specified for tags or metadata.")
+        return True # No changes needed
+
+    collection = init_collection()
+    
+    # 1. Query for all existing chunks matching the filename
+    query_expr = f"{CONFIG.milvus.filename_field} == \"{filename}\""
+    output_fields = [
+        CONFIG.milvus.chunk_id_field, # Primary key
+        CONFIG.milvus.doc_id_field,   # Original upload batch ID (if correctly stored)
+        CONFIG.milvus.embedding_field,
+        CONFIG.milvus.text_field,
+        CONFIG.milvus.metadata_field, # Original metadata (JSON string)
+        CONFIG.milvus.tags_field,     # Original tags (List[str])
+        CONFIG.milvus.filename_field,
+        'category' # Assuming 'category' exists based on schema in init_collection
+    ]
+    
+    try:
+        logger.info(f"Querying for chunks with filename '{filename}' to update metadata...")
+        results = collection.query(
+            expr=query_expr,
+            output_fields=output_fields,
+            limit=16384 # Max limit, adjust if needed
+        )
+        logger.info(f"Found {len(results)} chunks for filename '{filename}'.")
+
+        if not results:
+            logger.warning(f"No chunks found for filename '{filename}', cannot update metadata.")
+            return True # No chunks exist, so "update" is trivially successful
+
+        # Prepare data for re-insertion with updated fields
+        new_doc_ids = [] # Preserving original doc_id (upload batch id)
+        new_embeddings = []
+        new_texts = []
+        new_chunk_metadata_json = []
+        new_chunk_tags = []
+        new_filenames = []
+        new_categories = []
+        
+        original_pks = [res[CONFIG.milvus.chunk_id_field] for res in results] # Store original PKs for deletion
+
+        for chunk_data in results:
+            # Keep original embedding, text, upload batch id (doc_id), category, filename
+            new_embeddings.append(chunk_data[CONFIG.milvus.embedding_field])
+            new_texts.append(chunk_data[CONFIG.milvus.text_field])
+            new_doc_ids.append(chunk_data[CONFIG.milvus.doc_id_field]) 
+            new_categories.append(chunk_data['category'])
+            new_filenames.append(chunk_data[CONFIG.milvus.filename_field]) # Should be the same filename
+            
+            # Update tags if provided, otherwise keep original
+            updated_tags = chunk_data[CONFIG.milvus.tags_field] 
+            if tags is not None:
+                updated_tags = tags 
+            new_chunk_tags.append(updated_tags)
+            
+            # Update metadata if provided
+            try:
+                existing_metadata_dict = json.loads(chunk_data[CONFIG.milvus.metadata_field])
+            except (json.JSONDecodeError, TypeError):
+                existing_metadata_dict = {}
+                
+            updated_metadata_dict = existing_metadata_dict # Start with existing
+            if metadata is not None:
+                 # Preserve essential chunk-specific keys (like page_number) 
+                 # while overriding/adding others from the new document-level metadata.
+                chunk_specific_keys_to_keep = ['page', 'page_number', 'source'] # Add known chunk keys
+                preserved_chunk_meta = {k: v for k, v in existing_metadata_dict.items() if k in chunk_specific_keys_to_keep}
+                
+                updated_metadata_dict = {
+                    **metadata, # New document-level metadata
+                    **preserved_chunk_meta # Keep important chunk-specific info
+                }
+
+            new_chunk_metadata_json.append(json.dumps(updated_metadata_dict))
+
+        # 2. Delete the original chunks using their primary keys
+        logger.info(f"Deleting {len(original_pks)} original chunks for filename '{filename}' (PKs: {original_pks[:5]}...).")
+        # Ensure PK list is not empty before attempting delete
+        if not original_pks:
+             logger.warning("No primary keys found for deletion, skipping delete step.")
+        else:
+            delete_expr = f"{CONFIG.milvus.chunk_id_field} in {original_pks}"
+            delete_result = collection.delete(expr=delete_expr)
+            if delete_result.delete_count != len(original_pks):
+                 logger.warning(f"Expected to delete {len(original_pks)} chunks, but Milvus reported deleting {delete_result.delete_count}. Proceeding with insert.")
+            else:
+                 logger.info(f"Deletion successful: {delete_result.delete_count} entities deleted.")
+            collection.flush() # Ensure deletion is committed before insertion
+            logger.info("Collection flushed after deleting original chunks.")
+            # Add a small delay if experiencing race conditions, though flush should handle it
+            # time.sleep(0.5) 
+
+        # 3. Insert the chunks with updated metadata/tags
+        # Note: This will assign NEW primary keys (chunk_id_field) as it's auto_id
+        logger.info(f"Inserting {len(new_texts)} chunks with updated metadata for filename '{filename}'...")
+        insert_data = [
+            new_doc_ids,
+            new_embeddings,
+            new_texts,
+            new_chunk_metadata_json,
+            new_chunk_tags,
+            new_filenames,
+            new_categories
+        ]
+        insert_result = collection.insert(insert_data)
+        logger.info(f"Insertion successful: {len(insert_result.primary_keys)} entities inserted with new PKs ({insert_result.primary_keys[:5]}...).")
+        collection.flush() # Ensure insertion is committed
+        logger.info("Collection flushed after inserting updated chunks.")
+        
+        return True
+
+    except Exception as e:
+        logger.exception(f"Error updating metadata for document '{filename}': {str(e)}")
+        # Consider adding rollback logic if needed (though complex with delete-then-insert)
         return False
 
 def clean_collection() -> bool:
@@ -479,31 +606,41 @@ def search_collection(
                 "params": {"nprobe": 10}
             }
 
-        # Set default output fields if not provided
+        # Set default output fields if not provided, using config values
         if output_fields is None:
-            output_fields = ["text", "metadata", "tags"]
+            output_fields = [
+                CONFIG.milvus.text_field,
+                CONFIG.milvus.metadata_field,
+                CONFIG.milvus.tags_field,
+                CONFIG.milvus.filename_field # Also include filename by default
+            ]
 
-        # Execute search
+        # Execute search using config field names
         results = collection.search(
             data=[query_vector],
-            anns_field="embedding",
+            anns_field=CONFIG.milvus.embedding_field,
             param=search_params,
             limit=limit,
             expr=expr,
             output_fields=output_fields
         )
 
-        # Format results
+        # Format results using config field names
         formatted_results = []
         for hits in results:
             for hit in hits:
                 result = {
-                    "text": hit.fields.get("text", ""),
-                    "metadata": hit.fields.get("metadata", {}),
-                    "score": 1.0 / (1.0 + hit.distance)  # Convert distance to similarity score
+                    CONFIG.milvus.text_field: hit.entity.get(CONFIG.milvus.text_field, ""),
+                    CONFIG.milvus.metadata_field: hit.entity.get(CONFIG.milvus.metadata_field, {}),
+                    "score": hit.distance # Use raw distance or convert as needed
                 }
-                if "tags" in hit.fields:
-                    result["tags"] = hit.fields["tags"]
+                # Include other output fields if they exist in the entity
+                if CONFIG.milvus.tags_field in output_fields:
+                    result[CONFIG.milvus.tags_field] = hit.entity.get(CONFIG.milvus.tags_field, [])
+                if CONFIG.milvus.filename_field in output_fields:
+                    result[CONFIG.milvus.filename_field] = hit.entity.get(CONFIG.milvus.filename_field, "")
+                # Add other potential fields like chunk_id, doc_id if needed and requested
+                
                 formatted_results.append(result)
 
         return formatted_results

@@ -3,8 +3,9 @@
  * Centralizes all API URLs and endpoints for the frontend
  */
 
-// Get the API base URL from environment variables or use default
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+// Get the base URL from environment variables, defaulting to a relative path
+// Nginx will proxy requests starting with /api/
+const API_BASE_URL = process.env.REACT_APP_API_URL || '';
 
 // API Endpoints
 const API_ENDPOINTS = {
@@ -12,10 +13,10 @@ const API_ENDPOINTS = {
   CHAT: `${API_BASE_URL}/api/v1/chat`,
   
   // Document management
-  UPLOAD: `${API_BASE_URL}/api/v1/documents/upload`,
-  LIST_DOCUMENTS: `${API_BASE_URL}/api/v1/documents`,
-  DELETE_DOCUMENT_BY_FILENAME: (filename: string) => `${API_BASE_URL}/api/v1/documents/${filename}`,
-  GET_DOCUMENT: (filename: string) => `${API_BASE_URL}/api/v1/documents/${filename}/pdf`,
+  UPLOAD: `${API_BASE_URL}/api/v1/upload`,
+  DELETE_DOCUMENT_BY_FILENAME: (filename: string) => `${API_BASE_URL}/api/v1/delete/${filename}`,
+  GET_DOCUMENT: (filename: string) => `${API_BASE_URL}/api/v1/get_pdf/${filename}`,
+  UPDATE_DOCUMENT_METADATA: (filename: string) => `${API_BASE_URL}/api/v1/documents/${filename}/metadata`,
   
   // Configuration
   CONFIG: `${API_BASE_URL}/api/v1/config`,
@@ -27,11 +28,11 @@ const API_ENDPOINTS = {
   OPENAI_MODELS: `${API_BASE_URL}/api/v1/providers/openai/models`,
   
   // Presentation and research
-  PRESENTATION: `${API_BASE_URL}/api/v1/presentations`,
+  PRESENTATION: `${API_BASE_URL}/api/v1/presentation`,
   RESEARCH: `${API_BASE_URL}/api/v1/research`,
   
-  // Knowledge filters
-  DOCUMENTS: `${API_BASE_URL}/api/v1/documents`,
+  // Knowledge filters & Doc Listing (using /list which is defined as DOCUMENTS)
+  DOCUMENTS: `${API_BASE_URL}/api/v1/list`,
   COLLECTIONS: `${API_BASE_URL}/api/v1/collections`,
   TAGS: `${API_BASE_URL}/api/v1/tags`,
 };

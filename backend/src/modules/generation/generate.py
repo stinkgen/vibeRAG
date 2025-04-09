@@ -12,6 +12,7 @@ import aiohttp
 import asyncio
 import os
 from openai import AsyncOpenAI
+import openai
 
 from src.modules.config.config import CONFIG
 from src.modules.generation.exceptions import GenerationError
@@ -113,22 +114,65 @@ async def generate_with_provider(
             # Get OpenAI client
             openai_client = get_openai_client()
                 
-            # Call OpenAI API using new interface
-            stream = await openai_client.chat.completions.create(
-                model=model or CONFIG.openai.default_model,
-                messages=messages,
-                temperature=temperature,
-                stream=True
-            )
-            async for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+            try:
+                # Attempt to call OpenAI Chat API first
+                logger.info(f"Attempting chat completions with model: {model}")
+                stream = await openai_client.chat.completions.create(
+                    model=model or CONFIG.openai.default_model,
+                    messages=messages,
+                    temperature=temperature,
+                    stream=True
+                )
+                async for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
+                logger.info(f"Successfully streamed from chat completions endpoint for model: {model}")
+
+            except openai.NotFoundError as e:
+                # Check if the error is specifically the 'model not supported for chat' error
+                error_details = e.response.json()
+                if "error" in error_details and "message" in error_details["error"] and "not supported in the v1/chat/completions endpoint" in error_details["error"]["message"]:
+                    logger.warning(f"Model '{model}' not supported by chat completions endpoint. Trying v1/completions...")
+                    
+                    # Fallback to the v1/completions endpoint
+                    # Need to format messages into a single prompt
+                    prompt = "\\n".join([f"{m['role']}: {m['content']}" for m in messages])
+                    
+                    try:
+                        stream = await openai_client.completions.create(
+                            model=model, # Use the selected model
+                            prompt=prompt,
+                            temperature=temperature,
+                            stream=True,
+                            max_tokens=1500  # Adjust max_tokens as needed for completions
+                        )
+                        async for chunk in stream:
+                            if chunk.choices[0].text:
+                                yield chunk.choices[0].text
+                        logger.info(f"Successfully streamed from completions endpoint for model: {model}")
+
+                    except Exception as fallback_e:
+                        logger.error(f"Fallback to completions endpoint failed for model '{model}': {fallback_e}")
+                        raise GenerationError(f"Failed to generate response using fallback completions endpoint: {fallback_e}") from fallback_e
+                else:
+                    # Re-raise if it's a different NotFoundError (e.g., model truly doesn't exist)
+                    logger.error(f"OpenAI API Not Found error (non-chat compatibility): {e}")
+                    raise GenerationError(f"OpenAI API request failed: {e}") from e
+            except Exception as e:
+                # Catch other potential exceptions during the API call
+                logger.error(f"Generic error during OpenAI generation with model '{model}': {e}")
+                raise GenerationError(f"Failed to generate response: {e}") from e
         else:
             raise ValueError(f"Unsupported provider: {provider}")
             
     except Exception as e:
+        # Catch exceptions outside the provider blocks (e.g., client init)
         logging.error(f"Generation failed: {str(e)}")
-        raise GenerationError(f"Failed to generate response: {str(e)}")
+        # Avoid wrapping GenerationError in another GenerationError
+        if isinstance(e, GenerationError):
+            raise e
+        else:
+            raise GenerationError(f"Failed to generate response: {str(e)}") from e
 
 async def ollama(messages: List[Dict[str, str]], model: str = "llama2", stream: bool = False) -> Union[str, AsyncGenerator[str, None]]:
     """
