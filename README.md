@@ -1,5 +1,7 @@
 # 🚀 VibeRAG 🚀
 
+[![VibeRAG Banner](media/vibeRAGbanner.jpg)](https://github.com/stinkgen/vibeRAG)
+
 ### _{ Seamlessly Fuse Your Knowledge with AI }_
 
 ---
@@ -148,3 +150,24 @@ This rig is constantly evolving. Here's the upgrade manifest:
 ## Freedom Protocol (License) 📜
 
 MIT License. Go nuts. Build something cool.
+
+## 📸 Screenshots
+
+<details>
+<summary>Click to view screenshots</summary>
+
+[![VibeRAG Screenshot 1](media/vibeRAG_screen1.jpg)](media/vibeRAG_screen1.jpg)
+*Document Manager - List View*
+
+[![VibeRAG Screenshot 2](media/vibeRAG_screen2.jpg)](media/vibeRAG_screen2.jpg)
+*Document Manager - Card View*
+
+[![VibeRAG Screenshot 3](media/vibeRAG_screen3.jpg)](media/vibeRAG_screen3.jpg)
+*Chat Interface*
+
+[![VibeRAG Screenshot 4](media/vibeRAG_screen4.jpg)](media/vibeRAG_screen4.jpg)
+*Configuration Page*
+
+</details>
+
+## 🚀 Getting Started
