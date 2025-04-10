@@ -656,4 +656,190 @@
     border-radius: 4px;
     margin-bottom: 1rem;
     font-size: 0.9rem;
+}
+
+.docTable {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem; 
+    table-layout: fixed; /* Helps with column widths */
+}
+
+.docTable th, 
+.docTable td {
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid rgba(0, 150, 255, 0.15);
+    text-align: left;
+    vertical-align: middle; /* Align content vertically */
+    overflow: hidden; /* Prevent content overflow */
+    text-overflow: ellipsis; /* Add ellipsis for overflow */
+    white-space: nowrap; /* Keep content on one line */
+    display: table-cell; /* Ensure table cell behavior */
+}
+
+.docTable th {
+    color: var(--color-blue-primary);
+    font-weight: 600;
+    cursor: pointer;
+    background-color: rgba(0, 30, 60, 0.2);
+    position: sticky; /* Make header sticky if container scrolls */
+    top: 0; /* Required for sticky */
+    z-index: 1;
+    display: table-cell; /* Ensure table cell behavior */
+}
+
+.docTable tr {
+    transition: background-color 0.2s ease;
+    display: table-row; /* Ensure table row behavior */
+}
+
+.docTable tr:hover {
+    background-color: rgba(0, 50, 100, 0.15);
+}
+
+.docTable td:last-child, 
+.docTable th:last-child {
+    text-align: right;
+    width: 120px; /* Fixed width for action buttons column */
+    white-space: normal; /* Allow buttons to wrap if needed */
+}
+
+/* Style for the clickable document link */
+.docLink {
+    color: var(--color-text);
+    cursor: pointer;
+    transition: color 0.2s ease;
+    display: inline-block; /* Needed for text-overflow */
+    max-width: 100%; /* Ensure it doesn't overflow cell */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.docLink:hover {
+    color: var(--color-blue-bright);
+    text-decoration: underline;
+}
+
+/* Action Buttons in Table */
+.actionButton {
+    background: none;
+    border: none;
+    color: var(--color-grey-light);
+    cursor: pointer;
+    padding: 0.3rem;
+    margin-left: 0.5rem;
+    transition: color 0.2s ease;
+    line-height: 1; /* Prevent extra space */
+}
+
+.actionButton svg {
+    vertical-align: middle;
+}
+
+.actionButton:hover {
+    color: var(--color-blue-bright);
+}
+
+.editButton:hover {
+     color: var(--color-green); /* Specific hover for edit */
+}
+
+.deleteButton:hover {
+    color: var(--color-red); /* Specific hover for delete */
+}
+
+.sortIcon {
+    font-size: 0.8em;
+    margin-left: 0.3em;
+}
+
+/* Card View Specific Styles */
+.cardGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); /* Responsive columns */
+    gap: 1.5rem; /* Spacing between cards */
+    padding-top: 1.5rem; /* Add some space above cards */
+}
+
+.docCard {
+    background-color: rgba(0, 30, 60, 0.3);
+    border: 1px solid rgba(0, 150, 255, 0.2);
+    border-radius: 6px;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between; /* Pushes actions to bottom */
+    transition: all 0.3s ease;
+    overflow: hidden; /* Prevent content spill */
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2); /* Subtle shadow */
+}
+
+.docCard:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 5px 15px rgba(0, 150, 255, 0.2);
+    border-color: rgba(0, 150, 255, 0.4);
+}
+
+.cardContent {
+    margin-bottom: 1rem; /* Space between content and actions */
+}
+
+.cardTitle {
+    font-size: 1.1rem;
+    color: var(--color-blue-primary);
+    margin: 0 0 0.5rem 0;
+    cursor: pointer;
+    transition: color 0.2s ease;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cardTitle:hover {
+    color: var(--color-blue-bright);
+    text-decoration: underline;
+}
+
+.cardTags {
+    margin-bottom: 0.75rem;
+    min-height: 20px; /* Ensure consistent height even with no tags */
+}
+
+.cardTag {
+    display: inline-block;
+    background-color: rgba(0, 80, 150, 0.4);
+    color: var(--color-text-secondary);
+    padding: 0.2rem 0.5rem;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    margin-right: 0.4rem;
+    margin-bottom: 0.4rem;
+    white-space: nowrap;
+}
+
+.noTags {
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
+    font-style: italic;
+}
+
+.cardCollection {
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+    margin: 0;
+}
+
+.cardActions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    border-top: 1px solid rgba(0, 150, 255, 0.1); /* Separator line */
+    padding-top: 0.75rem;
+    margin-top: auto; /* Pushes actions down */
+}
+
+/* Use same action buttons as table, ensures consistency */
+.cardActions .actionButton {
+    /* Styles inherited/defined above */
 } 

@@ -205,72 +205,77 @@ const PresentationViewer: React.FC = () => {
     };
 
     return (
-        <div className={styles.container}>
-            <div className={styles.cyberHeader}>
-                <h2 className={styles.title}>
-                    <svg 
-                        className={styles.presentationIcon}
-                        xmlns="http://www.w3.org/2000/svg" 
-                        viewBox="0 0 24 24"
-                    >
-                        <path d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14zM5 10h14v2H5v-2zm0-4h14v2H5V6zm0 8h14v2H5v-2z"
-                        fill="currentColor"/>
-                    </svg>
-                    Generate Presentation
-                </h2>
-                <div className={styles.gridBackground}></div>
-            </div>
-            
-            <form onSubmit={handleSubmit} className={styles.form}>
-                <div className={styles.inputGroup}>
-                    <input
-                        type="text"
-                        value={filename}
-                        onChange={(e) => setFilename(e.target.value)}
-                        placeholder="Optional: PDF filename (e.g., whitepaper.pdf)"
-                        className={styles.input}
-                    />
-                </div>
-                
-                <div className={styles.inputGroup}>
-                    <textarea
-                        value={prompt}
-                        onChange={(e) => setPrompt(e.target.value)}
-                        placeholder="What should the presentation be about?"
-                        className={styles.textarea}
-                        rows={4}
-                    />
-                </div>
-                
-                <div className={styles.inputGroup} style={{ maxWidth: '150px' }}>
-                    <label htmlFor="numSlidesInput" className={styles.inputLabel}>Number of Slides:</label>
-                    <input
-                        id="numSlidesInput"
-                        type="number"
-                        value={numSlides}
-                        onChange={(e) => setNumSlides(parseInt(e.target.value, 10) || 1)}
-                        min="1"
-                        max="20"
-                        className={styles.input}
-                        style={{ textAlign: 'center' }}
-                    />
-                </div>
-                
-                <div className={styles.modelSelector}>
-                    <ModelSelector
-                        provider={modelConfig.provider}
-                        model={modelConfig.model}
-                        onProviderChange={(provider) => setModelConfig({ ...modelConfig, provider })}
-                        onModelChange={(model) => setModelConfig({ ...modelConfig, model })}
-                    />
-                </div>
-                
-                <button type="submit" className={styles.button} disabled={loading}>
-                    {loading ? 'Creating...' : 'Generate Slides 🚀'}
-                </button>
-            </form>
+        <div className={styles.presentationContainer}>
+            <div className={styles.controls}>
+                <h2 className={styles.header}>Generate Presentation</h2>
+                <form onSubmit={handleSubmit} className={styles.form}>
+                    {/* Row 1: File Upload and Prompt */}
+                    <div className={styles.inputRow}>
+                        {/* File Upload Group */}
+                        <div className={styles.inputGroup}>
+                            <label htmlFor="pdfFile" className={styles.inputLabel}>Optional PDF Context</label>
+                            <input
+                                type="file"
+                                id="pdfFile"
+                                accept=".pdf"
+                                onChange={(e) => {
+                                    if (e.target.files && e.target.files.length > 0) {
+                                        const file = e.target.files[0];
+                                        setFilename(file.name);
+                                    }
+                                }}
+                                className={styles.input}
+                            />
+                        </div>
+                        {/* Prompt Group */}
+                        <div className={styles.inputGroup}>
+                            <label htmlFor="prompt" className={styles.inputLabel}>Presentation Prompt</label>
+                            <textarea
+                                id="prompt"
+                                value={prompt}
+                                onChange={(e) => setPrompt(e.target.value)}
+                                required
+                                placeholder="e.g., Create a 5-slide presentation about the future of AI"
+                                className={styles.textarea}
+                            />
+                        </div>
+                    </div>
 
-            {error && <div className={styles.error}>{error}</div>}
+                    {/* Row 2: Num Slides, Model Selector, and Button */}
+                    <div className={styles.inputRow} style={{ alignItems: 'flex-end' }}>
+                        {/* Num Slides Group */}
+                        <div className={styles.inputGroup}>
+                            <label htmlFor="numSlides" className={styles.inputLabel}>Number of Slides</label>
+                            <input
+                                type="number"
+                                id="numSlides"
+                                value={numSlides}
+                                onChange={(e) => setNumSlides(parseInt(e.target.value, 10))}
+                                min="1"
+                                max="20"
+                                required
+                                className={styles.input}
+                            />
+                        </div>
+                        {/* Model Selector Group */}
+                        <div className={styles.modelSelectorGroup}>
+                            <label htmlFor="llmModel" className={styles.inputLabel}>LLM Model</label>
+                            <ModelSelector 
+                                provider={modelConfig.provider}
+                                model={modelConfig.model}
+                                onProviderChange={(provider) => setModelConfig({ ...modelConfig, provider })}
+                                onModelChange={(model) => setModelConfig({ ...modelConfig, model })}
+                            />
+                        </div>
+                        {/* Submit Button */}
+                        <button type="submit" disabled={loading} className={styles.button}>
+                            {loading ? 'Generating...' : 'Generate Slides'}
+                        </button>
+                    </div>
+
+                    {error && <p className={styles.error}>{error}</p>}
+                </form>
+            </div>
 
             {presentation && (
                 <div className={styles.presentation}>

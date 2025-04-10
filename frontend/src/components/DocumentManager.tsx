@@ -48,7 +48,7 @@ const truncateString = (str: string, maxLength: number): string => {
 
 const DocumentManager: React.FC = () => {
     // State management vibes
-    const [activeTab, setActiveTab] = useState<'upload' | 'manage'>('manage');
+    const [activeTab, setActiveTab] = useState('manage');
     const [docs, setDocs] = useState<DocInfo[]>([]);
     const [file, setFile] = useState<File | null>(null);
     const [tags, setTags] = useState('');
@@ -63,8 +63,8 @@ const DocumentManager: React.FC = () => {
 
     // Add view type state
     const [viewType, setViewType] = useState<'card' | 'list'>('card');
-    const [sortField, setSortField] = useState<string>('filename');
-    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+    const [sortField, setSortField] = useState('filename');
+    const [sortDirection, setSortDirection] = useState('asc');
     
     // Ref for file input
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -356,78 +356,144 @@ const DocumentManager: React.FC = () => {
         }
     };
 
-    // Render document list or grid
-    const renderDocuments = () => {
-        if (sortedDocs.length === 0) {
-            return (
-                <div className={styles.noResults}>
-                    {searchTerm ? 'No documents found matching your search.' : 'No documents uploaded yet.'}
-                </div>
-            );
+    // Update handleSort function to toggle direction
+    const handleSort = (field: string) => {
+        if (field === sortField) {
+            setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortField(field);
+            setSortDirection('asc');
         }
+    };
+
+    // Add handleSourceClick for opening documents from the list
+    const handleSourceClick = (filename: string) => {
+        try {
+            const pdfUrl = API_ENDPOINTS.GET_DOCUMENT(filename);
+            console.log(`Opening document: ${filename} from URL: ${pdfUrl}`);
+            window.open(pdfUrl, '_blank');
+        } catch (error) {
+            console.error(`Failed to construct URL or open document ${filename}:`, error);
+            setError(`Could not open document: ${filename}`); // Show error to user
+        }
+    };
+
+    // Renamed function for clarity
+    const renderDocumentTable = () => {
+        if (loading) return <div className={styles.loading}>Loading docs...</div>;
+        if (error && docs.length === 0) return <div className={styles.error}>{error}</div>;
+        if (docs.length === 0 && !loading) return <div className={styles.noDocs}>No documents found. Upload some!</div>;
+        
+        const headers = [
+            { key: 'filename', label: 'Filename' },
+            { key: 'tags', label: 'Tags' },
+            { key: 'metadata.collection', label: 'Collection' }, // Example metadata field
+            // Add more metadata keys if desired, e.g., { key: 'metadata.author', label: 'Author' }
+            { key: 'actions', label: 'Actions' }
+        ];
 
         return (
-            <div className={viewType === 'card' ? styles.docGrid : styles.docList}>
-                {sortedDocs.map(doc => (
-                    <div key={doc.doc_id} className={`${styles.docItem} ${viewType === 'card' ? styles.docCard : styles.docRow}`}>
-                        <div className={styles.docHeader}>
-                            <h3 className={styles.docTitle}>
-                                <a
-                                    href={API_ENDPOINTS.GET_DOCUMENT(doc.filename)}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className={styles.documentLink}
-                                    title={`Open ${doc.filename}`}
-                                >
-                                    {truncateString(doc.filename, 25)}
-                                </a>
-                            </h3>
-                            <div className={styles.actionButtons}>
-                                <a 
-                                    href={API_ENDPOINTS.GET_DOCUMENT(doc.filename)} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer" 
-                                    className={styles.viewButton}
-                                    title="View document"
-                                >
-                                    👁️ 
-                                </a>
-                                <button
-                                    onClick={() => handleOpenEditModal(doc)}
-                                    className={styles.editButton}
-                                    title="Edit metadata"
-                                >
-                                    ✏️
-                                </button>
-                                <button
-                                    onClick={() => handleDelete(doc.filename)}
-                                    className={styles.deleteButton}
-                                    title="Delete document"
-                                >
-                                    🗑️
-                                </button>
-                            </div>
-                        </div>
-
-                        {doc.tags.length > 0 && (
-                            <div className={styles.docTags}>
-                                {doc.tags.map((tag, i) => (
-                                    <span key={i} className={styles.tag}>
-                                        {tag}
-                                    </span>
-                                ))}
-                            </div>
-                        )}
-
-                        <div className={styles.docMetadata}>
-                            {Object.entries(doc.metadata).map(([key, value]) => (
-                                <div key={key} className={styles.metadataItem}>
-                                    <span className={styles.metadataKey}>{key}:</span>
-                                    <span className={styles.metadataValue}>
-                                        {formatMetadataValue(value)}
-                                    </span>
-                                </div>
+            <div className={styles.tableContainer}>
+                <table className={styles.docTable}>
+                    <thead>
+                        <tr>
+                            {headers.map(header => (
+                                <th key={header.key} onClick={() => header.key !== 'actions' && handleSort(header.key)}>
+                                    {header.label}
+                                    {sortField === header.key && (
+                                        <span className={styles.sortIcon}>
+                                            {sortDirection === 'asc' ? ' ▲' : ' ▼'}
+                                        </span>
+                                    )}
+                                </th>
                             ))}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {sortedDocs.map(doc => (
+                            <tr key={doc.doc_id}>
+                                <td>
+                                    <span 
+                                        className={styles.docLink} 
+                                        onClick={() => handleSourceClick(doc.filename)} // Use the new handler
+                                        title={`Open ${doc.filename}`}
+                                    >
+                                        📄 {doc.filename}
+                                    </span>
+                                </td>
+                                <td>{doc.tags?.join(', ') || '-'}</td>
+                                <td>{doc.metadata?.collection || 'default'}</td> 
+                                {/* Render other metadata fields similarly */} 
+                                <td>
+                                    <button 
+                                        className={`${styles.actionButton} ${styles.editButton}`}
+                                        onClick={() => handleOpenEditModal(doc)}
+                                        title="Edit Metadata"
+                                    >
+                                        {/* Edit Icon */} 
+                                        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="currentColor"/></svg>
+                                    </button>
+                                    <button 
+                                        className={`${styles.actionButton} ${styles.deleteButton}`}
+                                        onClick={() => handleDelete(doc.filename)}
+                                        title="Delete Document"
+                                    >
+                                        {/* Delete Icon */} 
+                                        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/></svg>
+                                    </button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        );
+    };
+
+    // New logic for rendering cards
+    const renderDocumentCards = () => {
+        if (loading) return <div className={styles.loading}>Loading docs...</div>;
+        if (error && docs.length === 0) return <div className={styles.error}>{error}</div>;
+        if (docs.length === 0 && !loading) return <div className={styles.noDocs}>No documents found. Upload some!</div>;
+
+        return (
+            <div className={styles.cardGrid}>
+                {sortedDocs.map(doc => (
+                    <div key={doc.doc_id} className={styles.docCard}>
+                        <div className={styles.cardContent}>
+                            <h4 
+                                className={styles.cardTitle} 
+                                onClick={() => handleSourceClick(doc.filename)}
+                                title={`Open ${doc.filename}`}
+                            >
+                                📄 {truncateString(doc.filename, 30)} {/* Use truncate helper */}
+                            </h4>
+                            <div className={styles.cardTags}>
+                                {doc.tags && doc.tags.length > 0 
+                                    ? doc.tags.slice(0, 3).map(tag => <span key={tag} className={styles.cardTag}>{truncateString(tag, 15)}</span>)
+                                    : <span className={styles.noTags}>No tags</span>}
+                                {doc.tags && doc.tags.length > 3 && <span className={styles.cardTag}>...</span>}
+                            </div>
+                             <p className={styles.cardCollection}>
+                                Collection: {doc.metadata?.collection || 'default'}
+                            </p>
+                             {/* Optionally add more metadata here */}
+                        </div>
+                        <div className={styles.cardActions}>
+                            <button 
+                                className={`${styles.actionButton} ${styles.editButton}`}
+                                onClick={() => handleOpenEditModal(doc)}
+                                title="Edit Metadata"
+                            >
+                                <svg viewBox="0 0 24 24" width="16" height="16"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="currentColor"/></svg>
+                            </button>
+                            <button 
+                                className={`${styles.actionButton} ${styles.deleteButton}`}
+                                onClick={() => handleDelete(doc.filename)}
+                                title="Delete Document"
+                            >
+                                <svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/></svg>
+                            </button>
                         </div>
                     </div>
                 ))}
@@ -523,7 +589,8 @@ const DocumentManager: React.FC = () => {
                         </button>
                     </div>
 
-                    {renderDocuments()}
+                    {/* Conditionally render table or cards */}
+                    {viewType === 'list' ? renderDocumentTable() : renderDocumentCards()}
                 </>
             )}
 

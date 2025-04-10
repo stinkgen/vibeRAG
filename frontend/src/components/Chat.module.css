@@ -90,16 +90,29 @@
     gap: 0.8rem;
 }
 
-.input {
-    background: rgba(0, 10, 20, 0.7);
-    border: 1px solid rgba(0, 150, 255, 0.3);
-    color: var(--color-text);
-    padding: 0.5rem 1rem;
-    border-radius: 4px;
-    outline: none;
-    transition: all 0.2s ease;
-    font-family: var(--font-body);
-    box-shadow: 0 0 5px rgba(0, 150, 255, 0.1);
+.inputArea {
+    display: flex;
+    align-items: flex-end;
+    padding: 10px 15px;
+    background-color: rgba(0, 0, 0, 0.3);
+    border-top: 1px solid var(--border-color);
+    gap: 10px;
+}
+
+.queryInput {
+    flex-grow: 1;
+    resize: none;
+    overflow-y: auto;
+    min-height: 24px;
+    max-height: 100px;
+    line-height: 1.5;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--input-border-color);
+    background-color: var(--input-bg-color);
+    color: var(--text-color);
+    font-size: 0.9rem;
+    transition: border-color 0.2s ease;
 }
 
 .input:focus {
@@ -378,31 +391,6 @@
     display: flex;
     gap: 0.8rem;
     align-items: center;
-}
-
-.queryInput {
-    flex: 1;
-    background: rgba(0, 20, 40, 0.7);
-    border: 1px solid rgba(0, 150, 255, 0.3);
-    color: var(--color-text);
-    padding: 0.8rem 1rem;
-    border-radius: 4px;
-    font-family: var(--font-body);
-    font-size: 0.95rem;
-    outline: none;
-    resize: none;
-    min-height: 50px;
-    transition: all 0.2s ease;
-    box-shadow: 0 0 5px rgba(0, 150, 255, 0.1) inset;
-}
-
-.queryInput:focus {
-    border-color: var(--color-blue-primary);
-    box-shadow: 0 0 10px rgba(0, 150, 255, 0.3) inset;
-}
-
-.queryInput::placeholder {
-    color: rgba(255, 255, 255, 0.5);
 }
 
 .sendButton {

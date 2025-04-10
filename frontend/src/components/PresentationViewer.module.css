@@ -56,55 +56,72 @@
 .form {
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-md);
-    margin-bottom: var(--spacing-xl);
-    background: rgba(0, 20, 40, 0.2);
-    padding: 1.5rem;
+    gap: 15px;
+    margin-bottom: 20px;
+    padding: 20px;
+    background-color: rgba(0, 0, 0, 0.2);
     border-radius: 8px;
-    border: 1px solid rgba(0, 150, 255, 0.2);
+    border: 1px solid var(--border-color);
+}
+
+/* Group related inputs together */
+.inputRow {
     display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-    align-items: flex-end;
+    gap: 15px;
+    align-items: flex-start;
 }
 
 .inputGroup {
-    flex-grow: 1;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
 }
 
+/* Style for labels */
 .inputLabel {
-    display: block;
-    margin-bottom: 0.3rem;
-    color: var(--text-color-secondary);
-    font-size: 0.9rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary-color);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
-.input {
-    padding: var(--spacing-sm);
-    background-color: rgba(0, 20, 40, 0.7);
-    border: 1px solid rgba(0, 150, 255, 0.3);
-    color: var(--color-text);
-    border-radius: 4px;
-    font-family: var(--font-body);
-    font-size: 0.95rem;
-    transition: all 0.2s ease;
-}
-
-.input:focus {
+.input,
+.textarea {
+    background: rgba(0, 10, 20, 0.7);
+    border: 1px solid var(--input-border-color);
+    color: var(--text-color);
+    padding: 10px 12px;
+    border-radius: 6px;
     outline: none;
-    border-color: var(--color-blue-primary);
-    box-shadow: 0 0 10px rgba(0, 150, 255, 0.3);
+    transition: all 0.2s ease;
+    font-family: var(--font-body);
+    font-size: 0.9rem;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .textarea {
-    composes: input;
-    min-height: 120px;
     resize: vertical;
-    font-family: var(--font-body);
+    min-height: 80px;
+}
+
+.input:focus,
+.textarea:focus {
+    border-color: var(--color-blue-primary);
+    box-shadow: 0 0 8px rgba(0, 150, 255, 0.3);
+}
+
+/* Adjust model selector container if needed */
+.modelSelectorGroup {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
 }
 
 .button {
-    padding: var(--spacing-md);
+    align-self: flex-start;
+    padding: 10px 25px;
     background: linear-gradient(135deg, var(--color-blue-primary) 0%, var(--color-blue-dark) 100%);
     color: var(--color-text);
     border: none;

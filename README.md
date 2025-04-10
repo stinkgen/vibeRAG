@@ -10,7 +10,7 @@
 [![FastAPI Backend](https://img.shields.io/badge/FastAPI-Backend-green?logo=fastapi)](https://fastapi.tiangolo.com/)
 [![React Frontend](https://img.shields.io/badge/React-Frontend-blue?logo=react&logoColor=61DAFB)](https://reactjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strictly%20Typed-blue?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Built with Love](https://img.shields.io/badge/Built%20with-%F0%9F%92%9C-ff69b4.svg)](https://example.com) <!-- Optional fun badge -->
+
 
 ---
 
@@ -131,6 +131,7 @@ vibeRAG/
 
 This rig is constantly evolving. Here's the upgrade manifest:
 
+*   **Better Config and LLM Management:** Add more flexible LLM router and configuration.
 *   **Agent Command Center:** Dedicated UI for managing specialized AI agents (beyond just Presentation/Research). Think tuning, orchestration, the whole nine yards.
 *   **Smarter Agents:** Jacking up the Presentation/Research agents with deeper reasoning, planning, and more tool integrations.
 *   **Sensory Overload:** Adding Text-to-Speech (TTS), Speech-to-Text (STT), and Image Generation. Interact with data in new ways.
