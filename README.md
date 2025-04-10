@@ -24,16 +24,16 @@
 <summary>Click to view screenshots</summary>
 
 [![VibeRAG Screenshot 1](media/vibeRAG_screen1.jpg)](media/vibeRAG_screen1.jpg)
-*Document Manager - List View*
-
-[![VibeRAG Screenshot 2](media/vibeRAG_screen2.jpg)](media/vibeRAG_screen2.jpg)
-*Document Manager - Card View*
-
-[![VibeRAG Screenshot 3](media/vibeRAG_screen3.jpg)](media/vibeRAG_screen3.jpg)
 *Chat Interface*
 
+[![VibeRAG Screenshot 2](media/vibeRAG_screen2.jpg)](media/vibeRAG_screen2.jpg)
+*Document Manager*
+
+[![VibeRAG Screenshot 3](media/vibeRAG_screen3.jpg)](media/vibeRAG_screen3.jpg)
+*Presentations*
+
 [![VibeRAG Screenshot 4](media/vibeRAG_screen4.jpg)](media/vibeRAG_screen4.jpg)
-*Configuration Page*
+*Research*
 
 </details>
 
