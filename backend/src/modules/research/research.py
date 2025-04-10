@@ -58,8 +58,17 @@ async def create_research_report(
         if chunks:
             prompt += "Relevant chunks:\n"
             for i, chunk in enumerate(chunks, 1):
-                filename = chunk['metadata'].get('filename', 'unknown file')
-                page = chunk['metadata'].get('page', '?')
+                raw_metadata = chunk.get('metadata')
+                metadata_dict = {}
+                if isinstance(raw_metadata, str):
+                    try:
+                        metadata_dict = json.loads(raw_metadata)
+                    except json.JSONDecodeError:
+                        logger.warning(f"[Research] Failed to parse metadata JSON: {raw_metadata}")
+                elif isinstance(raw_metadata, dict):
+                    metadata_dict = raw_metadata
+                filename = metadata_dict.get('filename', 'unknown file')
+                page = metadata_dict.get('page', '?')
                 prompt += f"{i}. From {filename} (page {page}):\n{chunk['text']}\n\n"
         
         if web_results:
@@ -67,7 +76,10 @@ async def create_research_report(
             for i, result in enumerate(web_results, 1):
                 prompt += f"{i}. {result['title']}\n{result['snippet']}\n\n"
         
-        prompt += """Based on the above information, generate a research report in the following JSON format:
+        prompt += """Based on the above information, generate a research report in the following JSON format.
+**You MUST return ONLY the raw JSON object, starting with { and ending with }, with no other text, explanations, or markdown formatting outside the JSON structure.**
+
+```json
 {
     "report": {
         "title": "A descriptive title for the research",
@@ -84,7 +96,8 @@ async def create_research_report(
             "Source 3"
         ]
     }
-}"""
+}
+```"""
         
         # Generate report with LLM
         response_gen = generate_with_provider(

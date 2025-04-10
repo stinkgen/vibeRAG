@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import styles from './Chat.module.css';
 import KnowledgeFilter from './KnowledgeFilter';
 import API_ENDPOINTS from '../config/api';
@@ -29,7 +31,7 @@ interface ChatHistory {
     role: 'user' | 'assistant';
     content: string;
     timestamp: string;
-    sources?: string[];
+    sources?: { filename: string; page: string | number }[];
     pending?: boolean;
   }[];
   modelProvider?: string;
@@ -46,7 +48,7 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
-  sources?: string[];
+  sources?: { filename: string; page: string | number }[];
   pending?: boolean;
 }
 
@@ -601,10 +603,16 @@ const Chat: React.FC = () => {
       };
 
       socket.onmessage = (event) => {
-        // console.log('[WebSocket] Raw message received:', event.data);
         try {
           const data = JSON.parse(event.data);
           // console.log('[WebSocket] Parsed message data:', data);
+
+          // --- REMOVE TEMPORARY DEBUG for 'sources' --- 
+          // if (data.type === 'sources') {
+          //     console.log('[WebSocket] Received sources, SKIPPING state update:', data.data);
+          //     return; 
+          // }
+          // --- END REMOVED DEBUG ---
 
           setMessages((prevMessages) => {
             const updatedMessages = [...prevMessages];
@@ -612,24 +620,24 @@ const Chat: React.FC = () => {
 
             if (assistantMsgIndex === -1) {
                 console.warn('[WebSocket] Could not find assistant message to update.');
-                return prevMessages; // Should not happen ideally
+                return prevMessages; 
             }
             
-            const assistantMsg = { ...updatedMessages[assistantMsgIndex] }; // Clone to modify
+            const assistantMsg = { ...updatedMessages[assistantMsgIndex] }; 
 
-            // Make assistant message non-pending as soon as we get *any* data
             if (assistantMsg.pending) {
                 assistantMsg.pending = false;
             }
 
             switch (data.type) {
-                case 'sources':
-                    assistantMsg.sources = data.data; // Assuming data structure { type: 'sources', data: [...] }
-                    // console.log('[WebSocket] Updated sources:', assistantMsg.sources);
+                // --- RE-ENABLE 'sources' case --- 
+                case 'sources': // Re-enable this case
+                    console.log("[WebSocket] Received sources, updating state:", data.data);
+                    assistantMsg.sources = data.data; // Assign the array of objects
                     break;
+                // --- END RE-ENABLE ---
                 case 'response':
-                    assistantMsg.content += data.data; // Assuming data structure { type: 'response', data: "..." }
-                    // console.log('[WebSocket] Appended response content chunk.');
+                    assistantMsg.content += data.data; 
                     break;
                 case 'error':
                     console.error('[WebSocket] Error message received:', data.data);
@@ -637,16 +645,15 @@ const Chat: React.FC = () => {
                                         ? data.data 
                                         : `**Error:** ${data.data || 'Unknown error from backend.'}`;
                     assistantMsg.content = errorText;
-                    setError(data.data || 'Unknown error from backend'); // Set top-level error state
+                    setError(data.data || 'Unknown error from backend'); 
                     setLoading(false);
-                    closeWebSocket(); // Close socket on backend error signal
+                    closeWebSocket(); 
                     break;
-                case 'end': // Backend signals end of stream
+                case 'end': 
                     console.log('[WebSocket] Received end signal from backend.');
                     setLoading(false);
-                    closeWebSocket(); // Close socket explicitly
+                    closeWebSocket(); 
                     break;
-                // Handle other message types if the backend sends them
                 default:
                     console.warn('[WebSocket] Unknown message type received:', data.type, data);
             }
@@ -906,9 +913,15 @@ const Chat: React.FC = () => {
               className={`${styles.messageRow} ${styles[message.role]} ${message.pending ? styles.pending : ''}`}
             >
               <div className={`${styles.messageContent} ${styles[message.role]}`}>
-                {message.content && message.content.split('\n').map((line, i) => (
-                  <div key={i}>{line || ' '}</div>
-                ))}
+                {message.role === 'assistant' ? (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {message.content}
+                  </ReactMarkdown>
+                ) : (
+                  message.content && message.content.split('\n').map((line, i) => (
+                    <div key={i}>{line || ' '}</div>
+                  ))
+                )}
                 
                 {message.pending && (
                   <div className={styles.typingIndicator}>
@@ -935,11 +948,12 @@ const Chat: React.FC = () => {
                     <div className={`${styles.sourcesList} ${expandedSourceIds.has(message.id) ? styles.expanded : ''}`}>
                       {message.sources.map((source, index) => (
                         <div 
-                          key={index} 
+                          key={`${message.id}-source-${index}`}
                           className={styles.sourceItem}
-                          onClick={() => handleSourceClick(source)}
+                          onClick={() => handleSourceClick(source.filename)}
+                          title={`Click to open ${source.filename}`}
                         >
-                          {source}
+                          📄 {source.filename} (Page: {source.page})
                         </div>
                       ))}
                     </div>

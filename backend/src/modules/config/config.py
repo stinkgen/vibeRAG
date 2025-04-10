@@ -78,7 +78,7 @@ class MilvusConfig:
 
 @dataclass
 class OllamaConfig:
-    host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    host: str = os.getenv("OLLAMA_HOST", "http://host.docker.internal:11434")
     model: str = os.getenv("OLLAMA_MODEL", "llama3")
     chat_endpoint: str = "/api/chat"
     generate_endpoint: str = "/api/generate"

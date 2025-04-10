@@ -27,21 +27,29 @@ app.use('/api', async (req, res) => {
   console.log(`[Manual Proxy] Forwarding ${req.method} ${req.originalUrl} to ${backendUrl}`);
 
   try {
+    // Prepare headers, ensuring original Content-Type is passed for multipart
+    const requestHeaders = {
+      ...req.headers,
+      host: new URL(backendTarget).host, // Set correct host for backend
+      // Remove headers that might cause issues or are set by axios/http agent
+      'content-length': undefined, 
+      'transfer-encoding': undefined,
+      connection: 'keep-alive',
+    };
+    // Ensure Content-Type from the original request is preserved
+    if (req.headers['content-type']) {
+        requestHeaders['content-type'] = req.headers['content-type'];
+    }
+
     const response = await axios({
       method: req.method,
       url: backendUrl,
-      // Forward relevant headers (careful with Host, Content-Length etc.)
-      headers: {
-        ...req.headers,
-        host: new URL(backendTarget).host, // Set correct host for backend
-        // Remove headers that might cause issues
-        'content-length': undefined,
-        'transfer-encoding': undefined,
-        connection: 'keep-alive', // Or 'close' depending on desired behavior
-      },
-      data: req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
-      responseType: 'stream', // Important: Handle response as a stream
-      validateStatus: status => true // Pass through backend status code
+      headers: requestHeaders, // Use the prepared headers
+      // Stream the incoming request body directly
+      // Axios should handle piping req when it's a stream
+      data: req, 
+      responseType: 'stream', 
+      validateStatus: status => true 
     });
 
     // Forward status code and headers from backend response
@@ -83,6 +91,53 @@ const server = app.listen(port, () => {
 // Create a WebSocket server instance without attaching it to a specific HTTP server
 const wss = new WebSocket.WebSocketServer({ noServer: true });
 
+// === WebSocket Proxy Logic ===
+
+// Heartbeat interval (milliseconds)
+const HEARTBEAT_INTERVAL = 30000; // 30 seconds
+const HEARTBEAT_TIMEOUT = 60000; // 60 seconds
+
+// Function to manage heartbeat for a WebSocket connection
+function setupHeartbeat(ws, name) {
+    let isAlive = true;
+    let pingTimeout = null;
+    let interval = setInterval(() => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            if(interval) clearInterval(interval);
+            return;
+        }
+        
+        isAlive = false; 
+        ws.ping(() => {}); 
+
+        pingTimeout = setTimeout(() => {
+            if (!isAlive) {
+                console.warn(`[Heartbeat ${name}] No pong received. Terminating connection.`);
+                ws.terminate(); 
+                if(interval) clearInterval(interval); 
+            }
+        }, HEARTBEAT_TIMEOUT);
+
+    }, HEARTBEAT_INTERVAL);
+
+    ws.on('pong', () => {
+        isAlive = true;
+        if (pingTimeout) clearTimeout(pingTimeout); 
+    });
+
+    ws.on('close', () => {
+        console.log(`[Heartbeat ${name}] Connection closed, clearing interval.`);
+        if (interval) clearInterval(interval);
+        if (pingTimeout) clearTimeout(pingTimeout);
+    });
+    
+    ws.on('error', (err) => {
+        console.error(`[Heartbeat ${name}] Error on connection: ${err.message}. Clearing interval.`);
+        if (interval) clearInterval(interval);
+        if (pingTimeout) clearTimeout(pingTimeout);
+    });
+}
+
 // Handle WebSocket upgrades manually using the 'ws' library
 server.on('upgrade', (request, clientSocket, head) => {
   const pathname = request.url;
@@ -91,13 +146,13 @@ server.on('upgrade', (request, clientSocket, head) => {
   if (pathname === '/api/v1/ws/chat') {
     console.log(`[Upgrade] Path matches. Handling upgrade...`);
 
-    // Use wss.handleUpgrade to complete the handshake
     wss.handleUpgrade(request, clientSocket, head, (wsClient) => {
       console.log('[WSS] Client WebSocket handshake complete.');
+      setupHeartbeat(wsClient, 'Client'); // Setup client heartbeat
 
-      // Now establish the connection to the backend WebSocket server
       console.log(`[WSS] Establishing backend connection to ${backendWsTarget}`);
       const backendSocket = new WebSocket(backendWsTarget);
+      setupHeartbeat(backendSocket, 'Backend'); // Setup backend heartbeat
 
       // --- Error Handling for Backend Connection ---
       backendSocket.on('error', (err) => {

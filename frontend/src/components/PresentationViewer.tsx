@@ -183,36 +183,25 @@ const PresentationViewer: React.FC = () => {
     };
 
     const handleSourceClick = async (source: string) => {
-        // Extract filename from source (e.g., "Page 76 of whitepaper.pdf" -> "whitepaper.pdf")
-        const match = source.match(/of\s+([^,\s]+)$/);
-        if (match && match[1]) {
-            const pdfFilename = match[1];
-            try {
-                 // Use API_ENDPOINTS constant for getting the PDF URL/file
-                const pdfUrl = API_ENDPOINTS.GET_DOCUMENT(pdfFilename);
-                console.log("Attempting to open PDF from URL:", pdfUrl);
-                // Assuming the backend endpoint directly returns the PDF or redirects
-                // Opening in a new tab is often blocked, directly fetching might be better if backend supports it
-                // Or if backend returns a temporary URL, use that.
-                // For now, just opening the constructed URL.
-                window.open(pdfUrl, '_blank'); 
-                
-                // --- Alternative if backend returns JSON with URL --- 
-                // const response = await axios.get(pdfUrl); 
-                // interface PDFResponse { url: string } 
-                // if (response.data && typeof (response.data as PDFResponse).url === 'string') {
-                //    window.open((response.data as PDFResponse).url, '_blank');
-                // } else {
-                //    console.error('Invalid response format for PDF link');
-                //    setError('Could not get valid link for the PDF document.');
-                // }
-                // --- End Alternative ---
+        // Source is now just the filename
+        const pdfFilename = source;
+        // Remove complex regex matching
+        // const match = source.match(/of\s+([^,\s]+)$/);
+        // if (match && match[1]) { 
+        //    const pdfFilename = match[1];
+        try {
+            const pdfUrl = API_ENDPOINTS.GET_DOCUMENT(pdfFilename);
+            console.log("Attempting to open PDF from URL:", pdfUrl);
+            window.open(pdfUrl, '_blank'); 
 
-            } catch (error: any) {
-                console.error('Failed to open PDF:', error);
-                 setError(error.response?.data?.detail || error.message || 'Could not open PDF source.');
-            }
+        } catch (error: any) {
+            console.error('Failed to open PDF:', error);
+            setError(error.response?.data?.detail || error.message || 'Could not open PDF source.');
         }
+        // } else {
+        //     console.error('Could not extract filename from source string:', source);
+        //     setError('Could not identify the source document filename.');
+        // }
     };
 
     return (

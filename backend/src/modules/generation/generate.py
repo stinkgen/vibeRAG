@@ -231,6 +231,10 @@ async def ollama(messages: List[Dict[str, str]], model: str = "llama2", stream: 
         logger.error(f"Ollama generation failed: {str(e)}")
         raise
 
+# --- Import the in-memory store ---
+from src.api.app import chat_histories_store
+# ---------------------------------
+
 async def chat_with_knowledge_ws(
     websocket: WebSocket,
     query: str,
@@ -259,23 +263,33 @@ async def chat_with_knowledge_ws(
             try:
                 # Import moved inside to avoid circular dependency if search uses generate
                 from src.modules.retrieval.search import semantic_search
-                search_results = await semantic_search(
+                search_results = semantic_search(
                     query,
-                    filename_filter=filename,
-                    limit=CONFIG.vector_store.search_limit,
-                    filters=filters
+                    filename=filename,
+                    limit=CONFIG.search.default_limit
                 )
                 logger.info(f"Semantic search returned {len(search_results)} results.")
+                
+                # --- MOVE RESULT PROCESSING INSIDE TRY BLOCK --- 
                 if search_results:
-                    # Extract sources with proper metadata handling
                     sources_data = []
                     for r in search_results:
-                        metadata = r.get('metadata', {})
-                        src_filename = metadata.get('filename', 'unknown')
-                        src_page = metadata.get('page', '?')
+                        raw_metadata = r.get('metadata') # Get raw metadata field
+                        metadata_dict = {} # Default to empty dict
+                        if isinstance(raw_metadata, str):
+                            try:
+                                metadata_dict = json.loads(raw_metadata)
+                            except json.JSONDecodeError:
+                                logger.warning(f"Failed to parse metadata JSON string: {raw_metadata}")
+                        elif isinstance(raw_metadata, dict):
+                            metadata_dict = raw_metadata
+                        else:
+                            logger.warning(f"Unexpected metadata type: {type(raw_metadata)}, value: {raw_metadata}")
+
+                        src_filename = metadata_dict.get('filename', 'unknown')
+                        src_page = metadata_dict.get('page', '?')
                         sources_data.append({"filename": src_filename, "page": src_page})
                     
-                    # Remove duplicates based on filename and page
                     unique_sources = []
                     seen = set()
                     for item in sources_data:
@@ -285,11 +299,13 @@ async def chat_with_knowledge_ws(
                             seen.add(identifier)
                     
                     context_text += "Relevant Documents:\n" + "\n".join([r['text'] for r in search_results])
-                    # Send sources over WebSocket
                     await websocket.send_json({"type": "sources", "data": unique_sources})
+                # --- END MOVED BLOCK ---
+
             except Exception as e:
-                logger.exception(f"Semantic search failed: {e}")
-                await websocket.send_json({"type": "error", "data": f"Failed to retrieve information: {e}"}) # Send error via WS
+                # This will now catch errors during search AND processing
+                logger.exception(f"Semantic search or result processing failed: {e}") 
+                await websocket.send_json({"type": "error", "data": f"Failed to retrieve information: {e}"}) 
                 return
         # 2. Web Search
         if use_web:
@@ -316,25 +332,62 @@ async def chat_with_knowledge_ws(
     else:
         logger.info("Skipping knowledge/web search based on parameters.")
 
+    # --- Retrieve and Prepare History ---
+    retrieved_history: List[Dict[str, str]] = []
+    if chat_history_id:
+        retrieved_history = chat_histories_store.get(chat_history_id, [])
+        # Limit history (e.g., last 10 messages)
+        history_limit = 10 
+        if len(retrieved_history) > history_limit:
+            retrieved_history = retrieved_history[-history_limit:]
+            logger.info(f"Truncated history for {chat_history_id} to last {history_limit} messages.")
+    else:
+         logger.info("No chat_history_id provided, starting fresh conversation.")
+         # If no ID, we don't store history for this turn
+
+    # --- Add current user query to store BEFORE generation ---
+    if chat_history_id:
+        if chat_history_id not in chat_histories_store:
+             chat_histories_store[chat_history_id] = []
+        # Store the user message CONTENT as it's being sent to the LLM (with context)
+        
+        # REVERT: Store only the raw user query in history for clarity
+        # Construct the user message content with context for storage <-- Remove this section
+        # context_for_prompt = context_text if context_text else "No specific context was provided for this query."
+        # user_content_for_history = f"CONTEXT:\n{context_for_prompt}\n\nQUESTION: {query}"
+        # chat_histories_store[chat_history_id].append({"role": "user", "content": user_content_for_history})
+        
+        # Correct line to store raw query:
+        chat_histories_store[chat_history_id].append({"role": "user", "content": query})
+        
+        # logger.info(f"Added user query (with context) to history store for ID: {chat_history_id}") # OLD LOG
+        logger.info(f"Added raw user query to history store for ID: {chat_history_id}") # Correct log
+
     # --- Prepare messages for LLM --- 
-    system_prompt = (
-        "You are a helpful AI assistant. Use the provided context (documents and web results) "
-        "to answer the user's question accurately and concisely. "
-        # Removed citation instruction as sources are sent separately
-        "If the context doesn\'t contain relevant information, state that clearly."
+    system_prompt_content = (
+        "You are a helpful AI assistant. Use the provided CONTEXT from the user's current query "
+        "to answer the user's question accurately and concisely. Consider the CHAT HISTORY provided "
+        "for conversational context. If the context or history doesn't contain relevant information, state that clearly.\n\n" 
+        "**Formatting Instructions:**\n"
+        "- Use Markdown for formatting (e.g., lists, bold, italics, code blocks) to enhance readability.\n"
+        "- Structure responses logically, using headings or bullet points where appropriate."
     )
-    context_for_prompt = context_text if context_text else "No specific context was provided."
-    user_prompt = f"Context:\n{context_for_prompt}\n\nQuestion: {query}"
-    
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt}
-    ]
+    system_prompt_message = {"role": "system", "content": system_prompt_content}
+
+    # This calculation is now duplicated, but keep it for clarity in constructing the LLM message
+    context_for_prompt_llm = context_text if context_text else "No specific context was provided for this query."
+    current_user_query_content_llm = f"CONTEXT:\n{context_for_prompt_llm}\n\nQUESTION: {query}"
+    current_user_message = {"role": "user", "content": current_user_query_content_llm}
+
+    # Combine system prompt, retrieved history, and current user message
+    messages_for_llm = [system_prompt_message] + retrieved_history + [current_user_message]
+    logger.debug(f"Messages prepared for LLM (History length: {len(retrieved_history)}): {messages_for_llm}")
 
     # --- Generate response and send over WebSocket --- 
+    full_assistant_response = "" # Accumulate the full response
     try:
         response_generator = generate_with_provider(
-            messages,
+            messages_for_llm, # Use the combined list
             model,
             provider,
             temperature
@@ -342,6 +395,7 @@ async def chat_with_knowledge_ws(
         
         async for response_chunk in response_generator:
             if response_chunk: # Ensure not sending empty strings
+                full_assistant_response += response_chunk # Accumulate
                 try:
                     # Check connection state before sending
                     if websocket.client_state == WebSocketState.CONNECTED:
@@ -352,6 +406,15 @@ async def chat_with_knowledge_ws(
                 except WebSocketDisconnect:
                     logger.warning("WebSocket disconnected during send_json for response chunk.")
                     break # Exit loop if disconnected
+        
+        # --- Store assistant response AFTER successful generation ---
+        if chat_history_id:
+             # Check if the ID is still valid (might have been cleared elsewhere?) - unlikely but safe
+             if chat_history_id in chat_histories_store:
+                  chat_histories_store[chat_history_id].append({"role": "assistant", "content": full_assistant_response})
+                  logger.info(f"Added assistant response to history store for ID: {chat_history_id}")
+             else:
+                  logger.warning(f"Chat history ID {chat_history_id} disappeared from store before assistant response could be saved.")
         
         # Send end message only if still connected
         try:
@@ -365,6 +428,7 @@ async def chat_with_knowledge_ws(
 
     except GenerationError as e:
         logger.error(f"Generation failed during streaming: {e}")
+        # Do NOT store assistant response if generation failed.
         try:
             # Check connection state before sending error
             if websocket.client_state == WebSocketState.CONNECTED:

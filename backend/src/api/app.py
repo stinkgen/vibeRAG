@@ -27,6 +27,12 @@ from starlette.routing import Mount
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
+# === In-Memory Chat History Store ===
+# WARNING: This is temporary and will be lost on backend restart.
+# Structure: { chat_id: List[Dict[str, str]] }
+chat_histories_store: Dict[str, List[Dict[str, str]]] = {}
+# ====================================
+
 # from frontend.backend.services.chat_service import ChatService, RAGError, SearchError, GenerationError # Commented out - remove later
 from src.modules.generation.slides import create_presentation # Fixed import
 from src.modules.research.research import create_research_report # Fixed import
@@ -259,8 +265,8 @@ async def websocket_chat_endpoint(websocket: WebSocket):
                     model=params.get("model", CONFIG.chat.model), # Optional w/ default
                     provider=params.get("provider", CONFIG.chat.provider), # Optional w/ default
                     temperature=params.get("temperature", CONFIG.chat.temperature), # Optional w/ default
-                    filters=params.get("filters") # Optional
-                    # Ignoring chat_history_id, stream, etc.
+                    filters=params.get("filters"), # Optional
+                    chat_history_id=params.get("chat_history_id") # Pass the ID!
                 )
                 logger.info("chat_with_knowledge_ws handler finished.")
 
@@ -360,7 +366,7 @@ async def research(request: ResearchRequest) -> ResearchResponse:
     """Generate a research report based on the provided query."""
     logger.info(f"Research request incoming for '{request.query}'—knowledge synthesis time! 🔬")
     try:
-        result = create_research_report(
+        result = await create_research_report(
             query=request.query,
             use_web=request.use_web
         )

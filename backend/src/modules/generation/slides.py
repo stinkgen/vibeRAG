@@ -130,8 +130,22 @@ You MUST return your response in this EXACT format, with bullet points for main 
                 if isinstance(slides_data, dict) and "slides" in slides_data and isinstance(slides_data["slides"], list):
                      logger.info("Successfully generated and parsed presentation JSON.")
                      # Add sources (filenames from context chunks) to the response if needed by frontend
-                     sources = list(set(c.get('metadata', {}).get('filename', 'unknown') for c in chunks if c.get('metadata', {}).get('filename')))
-                     slides_data["sources"] = sources # Assuming frontend expects sources here
+                     sources = set()
+                     for c in chunks:
+                         raw_metadata = c.get('metadata')
+                         metadata_dict = {}
+                         if isinstance(raw_metadata, str):
+                             try:
+                                 metadata_dict = json.loads(raw_metadata)
+                             except json.JSONDecodeError:
+                                 logger.warning(f"[Slides] Failed to parse metadata JSON: {raw_metadata}")
+                         elif isinstance(raw_metadata, dict):
+                             metadata_dict = raw_metadata
+                         
+                         filename = metadata_dict.get('filename')
+                         if filename:
+                             sources.add(filename)
+                     slides_data["sources"] = list(sources) # Send unique list of filenames
                      return slides_data
                 else:
                     logger.error("Parsed JSON does not match expected presentation structure.")

@@ -629,16 +629,20 @@ def search_collection(
         formatted_results = []
         for hits in results:
             for hit in hits:
+                # Safely get entity fields using .get(key) and providing default with 'or'
+                text_value = hit.entity.get(CONFIG.milvus.text_field) or ""
+                metadata_value = hit.entity.get(CONFIG.milvus.metadata_field) or {}
+                
                 result = {
-                    CONFIG.milvus.text_field: hit.entity.get(CONFIG.milvus.text_field, ""),
-                    CONFIG.milvus.metadata_field: hit.entity.get(CONFIG.milvus.metadata_field, {}),
+                    CONFIG.milvus.text_field: text_value,
+                    CONFIG.milvus.metadata_field: metadata_value,
                     "score": hit.distance # Use raw distance or convert as needed
                 }
                 # Include other output fields if they exist in the entity
                 if CONFIG.milvus.tags_field in output_fields:
-                    result[CONFIG.milvus.tags_field] = hit.entity.get(CONFIG.milvus.tags_field, [])
+                    result[CONFIG.milvus.tags_field] = hit.entity.get(CONFIG.milvus.tags_field) or []
                 if CONFIG.milvus.filename_field in output_fields:
-                    result[CONFIG.milvus.filename_field] = hit.entity.get(CONFIG.milvus.filename_field, "")
+                    result[CONFIG.milvus.filename_field] = hit.entity.get(CONFIG.milvus.filename_field) or ""
                 # Add other potential fields like chunk_id, doc_id if needed and requested
                 
                 formatted_results.append(result)
