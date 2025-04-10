@@ -1,128 +1,112 @@
-# VibeRAG
+# ⚡ VibeRAG ⚡
 
-A Retrieval-Augmented Generation (RAG) system with a cyberpunk UI for knowledge management, document analysis, and AI-powered chat.
+A Retrieval-Augmented Generation (RAG) system packing a FastAPI backend, React/TypeScript frontend, and Milvus vector storage – all wrapped in a cyberpunk UI.
 
-![VibeRAG](https://img.shields.io/badge/VibeRAG-Cyberpunk%20RAG-blue)
-![License](https://img.shields.io/badge/License-MIT-green)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) 
+[![Docker](https://img.shields.io/badge/Docker-Powered-blue?logo=docker)](https://www.docker.com/)
 
-## Overview
+## Features
 
-VibeRAG combines the power of vector databases, LLMs, and semantic search to provide a unified interface for managing documents and interacting with your knowledge base. The system includes:
+- **Document Ingestion:** Handles various formats, chunks them, generates embeddings.
+- **Vector Storage:** Utilizes Milvus for efficient similarity search.
+- **Hybrid Search:** Combines semantic and keyword search (where applicable).
+- **AI Chat:** Context-aware chat powered by LLMs (OpenAI/Ollama) with RAG.
+- **Source Linking:** Cites sources used in RAG responses.
+- **Streaming:** Real-time response streaming via WebSockets.
+- **Chat History:** Persistent, context-aware chat sessions.
+- **Content Generation:**
+    - Presentation slide generation.
+    - Research report generation.
+- **Web Search Integration:** Augments knowledge with real-time web results (Google Custom Search).
+- **Configuration UI:** Manage LLM settings, API keys, and provider status.
 
-- Document ingestion and chunking pipeline
-- Vector storage with Milvus
-- Semantic, keyword, and hybrid search capabilities
-- AI chat with sources/citations
-- Knowledge filtering by documents, collections, and tags
-- Web search integration
-- Streaming responses for a responsive UI
-- Chat history management
-- Presentation generation
+## Stack
 
-## Screenshots
+- **Backend:** Python, FastAPI, Uvicorn
+- **Frontend:** TypeScript, React, Vite, `react-markdown`
+- **Vector DB:** Milvus
+- **LLM Providers:** OpenAI, Ollama
+- **Containerization:** Docker, Docker Compose
+- **Proxying:** Node.js/Express (Frontend container), `ws` library for WebSockets
 
-(Add screenshots of your UI here)
+## Running with Docker Compose (Recommended)
 
-## Installation & Running (Docker Compose - Recommended)
+Fire up the entire stack – backend, frontend, Milvus cluster – with Docker.
 
-This method runs the entire application stack (backend, frontend, Milvus, MinIO, etcd) in Docker containers.
+**Prerequisites:**
 
-### Prerequisites
+- Docker & Docker Compose
+- Git
 
-- Docker and Docker Compose
-- Git (for cloning)
+**Setup:**
 
-### Setup
-
-1.  **Clone the repository:**
+1.  **Clone:**
     ```bash
-    git clone https://github.com/yourusername/vibeRAG.git # Replace with actual repo URL
+    git clone https://github.com/yourusername/vibeRAG.git # <- Replace with your repo URL
     cd vibeRAG
     ```
 
-2.  **Configure Environment Variables:**
-    Copy the example environment file. You **must** edit this file to add your API keys (like `OPENAI_API_KEY` if needed) and can adjust ports if necessary.
+2.  **Configure Environment (`.env.local`):**
+    Copy the template and **edit it**. You *must* add your `OPENAI_API_KEY` if using OpenAI. Configure `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_ENGINE_ID` for web search. Adjust ports if defaults clash.
     ```bash
     cp .env.example .env.local
-    nano .env.local # Or your preferred editor
+    nano .env.local # Or your editor of choice
     ```
-    *   The `BACKEND_PORT` and `FRONTEND_PORT` variables control which ports the application is exposed on your host machine.
-    *   Other variables (API keys, Milvus/MinIO settings) are passed into the respective containers.
+    *   `OLLAMA_HOST` defaults to `http://host.docker.internal:11434` to connect to Ollama running on your *host* machine.
 
-3.  **Build and Run with Docker Compose:**
-    This command will build the backend and frontend images (if not already built) and start all services defined in `docker-compose.yml`.
+3.  **Build & Launch:**
+    This builds the images and starts all services in the background.
     ```bash
-    docker-compose up --build -d
+    docker compose up --build -d
     ```
-    *   `--build`: Forces Docker to rebuild the images (use this after code changes).
-    *   `-d`: Runs the containers in detached mode (in the background).
+    *   `--build`: Use after code changes to rebuild images.
+    *   `-d`: Detached mode.
 
-4.  **Accessing the Application:**
-    *   **Frontend:** Open your browser to `http://localhost:<FRONTEND_PORT>` (e.g., `http://localhost:3000` if you used the default port).
-    *   **Backend API:** The API is accessible at `http://localhost:<BACKEND_PORT>` (e.g., `http://localhost:8000`).
+4.  **Access:**
+    *   **Frontend:** `http://localhost:<FRONTEND_PORT>` (Default: `http://localhost:3000`)
+    *   **Backend API (Direct):** `http://localhost:<BACKEND_PORT>` (Check `.env.local` or `docker-compose.yml`, often 8000 or similar)
 
-5.  **Stopping the Application:**
+5.  **Shutdown:**
     ```bash
-    docker-compose down
+    docker compose down
     ```
-    Use `docker-compose down -v` to also remove the data volumes (Milvus data, etc.).
+    Add `-v` to nuke data volumes (Milvus data, etc.).
 
-6.  **Viewing Logs:**
+6.  **Logs:**
     ```bash
-    docker-compose logs -f # View logs for all services
-    docker-compose logs -f backend # View logs for backend only
-    docker-compose logs -f frontend # View logs for frontend only
+    docker compose logs -f          # Tail all logs
+    docker compose logs -f backend  # Tail backend logs
+    docker compose logs -f frontend # Tail frontend (Node.js proxy) logs
     ```
 
-## Development (Using Docker Compose)
+## Development Hot-Reloading (Backend)
 
-For development, you can modify the `docker-compose.yml` file to mount your local source code into the containers. This allows for hot-reloading (changes reflect without rebuilding the image).
+The `docker-compose.yml` mounts `./backend/src` into the container. The `uvicorn` command uses `--reload`, so backend code changes should trigger an automatic server restart. Check backend logs to confirm.
 
-1.  **Uncomment Volume Mounts:** In `docker-compose.yml`, uncomment the volume mount lines in the `backend` service:
-    ```yaml
-    # backend service...
-    volumes:
-      # Optional: Mount source code for development with hot-reloading
-      # Remove this for production builds
-      - ./backend/src:/app/src # <--- Uncomment this line
-      # Map the main volumes dir for potential file access/storage if needed
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes:/app/volumes
-    ```
-    *(Note: Frontend hot-reloading requires more complex Docker setup, often involving running `npm start` inside the container instead of serving static files. The current frontend Dockerfile is optimized for production builds.)*
+*(Note: Frontend hot-reloading isn't configured in the current production-focused Dockerfile setup.)*
 
-2.  **Start with Docker Compose:**
-    ```bash
-    docker-compose up --build -d
-    ```
-3.  **Backend Hot-Reloading:** Changes made to files in your local `./backend/src` directory should now trigger the `uvicorn` server inside the container to reload automatically (check `docker-compose logs -f backend`).
-
-## Project Structure (Dockerized)
+## Project Structure
 
 ```
 vibeRAG/
-├── backend/
-│   ├── src/              # Backend FastAPI source code
-│   ├── Dockerfile        # Instructions to build backend image
-│   └── requirements.txt  # Backend Python dependencies
-├── frontend/
+├── backend/             # FastAPI Microservice
+│   ├── src/             # Core source code
+│   ├── Dockerfile
+│   └── requirements.txt
+├── frontend/            # React Frontend & Node.js Proxy Server
 │   ├── public/
-│   ├── src/              # Frontend React source code
-│   ├── Dockerfile        # Instructions to build frontend image
-│   └── package.json      # Frontend dependencies
-├── .env.example          # Environment variables template
-├── .env.local            # Local environment variables (used by docker-compose)
+│   ├── src/             # React source code
+│   ├── Dockerfile       # Multi-stage build (React build + Node server)
+│   ├── package.json
+│   └── server.js        # Node.js/Express server (serves static files, proxies API/WS)
+├── .env.example         # Environment variable template
+├── .env.local           # YOUR local environment vars (Gitignored)
 ├── .gitignore
-├── docker-compose.yml    # Defines all services (backend, frontend, db, etc.)
+├── docker-compose.yml   # Service definitions & orchestration
 ├── README.md
-└── ...                   # Other config/script files if any
+└── ...
 ```
 
 ## License
 
-MIT
-
-## Acknowledgments
-
-- This project uses [Milvus](https://milvus.io/) for vector storage
-- UI inspired by cyberpunk aesthetics
-- Built with FastAPI and React
+MIT - Go wild.
