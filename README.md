@@ -1,6 +1,6 @@
 # ⚡ VibeRAG ⚡
 
-A Retrieval-Augmented Generation (RAG) system packing a FastAPI backend, React/TypeScript frontend, and Milvus vector storage – all wrapped in a cyberpunk UI.
+A Retrieval-Augmented Generation (RAG) system packing a FastAPI backend, React/TypeScript frontend, and Milvus vector storage – all wrapped in love.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) 
 [![Docker](https://img.shields.io/badge/Docker-Powered-blue?logo=docker)](https://www.docker.com/)
@@ -42,7 +42,7 @@ Fire up the entire stack – backend, frontend, Milvus cluster – with Docker.
 
 1.  **Clone:**
     ```bash
-    git clone https://github.com/yourusername/vibeRAG.git # <- Replace with your repo URL
+    git clone https://github.com/stinkgen/vibeRAG.git
     cd vibeRAG
     ```
 
@@ -64,7 +64,7 @@ Fire up the entire stack – backend, frontend, Milvus cluster – with Docker.
 
 4.  **Access:**
     *   **Frontend:** `http://localhost:<FRONTEND_PORT>` (Default: `http://localhost:3000`)
-    *   **Backend API (Direct):** `http://localhost:<BACKEND_PORT>` (Check `.env.local` or `docker-compose.yml`, often 8000 or similar)
+    *   **Backend API (Direct):** `http://localhost:<BACKEND_PORT>` (Default: `http://localhost:8000`)
 
 5.  **Shutdown:**
     ```bash
