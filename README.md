@@ -18,6 +18,25 @@
 
 **VibeRAG** ain't your grandpa's document tool. It's a Retrieval-Augmented Generation system packing a FastAPI backend punch, a slick React/TypeScript frontend, and Milvus vector muscle – all wrapped in a UI dripping with properly vibed aesthetic. Talk to your docs, generate content, make knowledge *work*.
 
+📸 Screenshots
+
+<details>
+<summary>Click to view screenshots</summary>
+
+[![VibeRAG Screenshot 1](media/vibeRAG_screen1.jpg)](media/vibeRAG_screen1.jpg)
+*Document Manager - List View*
+
+[![VibeRAG Screenshot 2](media/vibeRAG_screen2.jpg)](media/vibeRAG_screen2.jpg)
+*Document Manager - Card View*
+
+[![VibeRAG Screenshot 3](media/vibeRAG_screen3.jpg)](media/vibeRAG_screen3.jpg)
+*Chat Interface*
+
+[![VibeRAG Screenshot 4](media/vibeRAG_screen4.jpg)](media/vibeRAG_screen4.jpg)
+*Configuration Page*
+
+</details>
+
 ## Core Features 🔥
 
 *   **Doc Devourer:** Ingests PDFs, Markdown, TXT – chunks 'em, embeds 'em. Done.
@@ -150,24 +169,3 @@ This rig is constantly evolving. Here's the upgrade manifest:
 ## Freedom Protocol (License) 📜
 
 MIT License. Go nuts. Build something cool.
-
-## 📸 Screenshots
-
-<details>
-<summary>Click to view screenshots</summary>
-
-[![VibeRAG Screenshot 1](media/vibeRAG_screen1.jpg)](media/vibeRAG_screen1.jpg)
-*Document Manager - List View*
-
-[![VibeRAG Screenshot 2](media/vibeRAG_screen2.jpg)](media/vibeRAG_screen2.jpg)
-*Document Manager - Card View*
-
-[![VibeRAG Screenshot 3](media/vibeRAG_screen3.jpg)](media/vibeRAG_screen3.jpg)
-*Chat Interface*
-
-[![VibeRAG Screenshot 4](media/vibeRAG_screen4.jpg)](media/vibeRAG_screen4.jpg)
-*Configuration Page*
-
-</details>
-
-## 🚀 Getting Started
