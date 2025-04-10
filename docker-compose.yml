@@ -17,6 +17,8 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    networks:
+      - vibe-network
 
   minio:
     container_name: milvus-minio
@@ -32,6 +34,8 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    networks:
+      - vibe-network
 
   standalone:
     container_name: milvus-standalone
@@ -46,8 +50,18 @@ services:
       - "${MILVUS_API_PORT:-19530}:19530"
       - "${MILVUS_METRICS_PORT:-9091}:9091"
     depends_on:
-      - "etcd"
-      - "minio"
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - vibe-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   backend:
     container_name: vibe-backend
@@ -55,28 +69,22 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     env_file:
-      - .env.local  # Pass environment variables from .env.local
+      - .env.local
     environment:
-      # Override port if needed, otherwise defaults to 8000 from Dockerfile CMD
-      # Ensure BACKEND_PORT in .env.local matches the exposed port if overriding
       - BACKEND_PORT=${BACKEND_PORT:-8000}
-      # Ensure the backend knows where Milvus is running
       - MILVUS_HOST=standalone
       - MILVUS_PORT=${MILVUS_API_PORT:-19530}
-      # Add other necessary backend env vars if they are not in .env.local
-      # e.g., OPENAI_API_KEY, GOOGLE_SEARCH_API_KEY, etc. if not using env_file
     ports:
-      - "${BACKEND_PORT:-8000}:8000" # Map host port to container port 8000
+      - "8000:8000"
     volumes:
-      # Optional: Mount source code for development with hot-reloading
-      # Remove this for production builds
-      # - ./backend/src:/app/src
-      # Map the main volumes dir for potential file access/storage if needed
+      - ./backend/src:/app/src
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes:/app/volumes
     depends_on:
-      - standalone # Depends on Milvus being ready
+      standalone:
+         condition: service_healthy
     networks:
-      - default
+      - vibe-network
+    command: ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   frontend:
     container_name: vibe-frontend
@@ -84,12 +92,15 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "${FRONTEND_PORT:-3000}:80" # Map host port to Nginx container port 80
+      - "${FRONTEND_PORT:-3000}:3000"
     depends_on:
-      - backend # Ensures backend starts before frontend Nginx (for proxying)
+      backend:
+        condition: service_started
+      standalone:
+        condition: service_healthy
     networks:
-      - default
+      - vibe-network
 
 networks:
-  default:
-    name: milvus 
+  vibe-network:
+    name: vibe-network 

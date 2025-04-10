@@ -16,12 +16,16 @@ from contextlib import asynccontextmanager
 import aiohttp
 import starlette.formparsers
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Query, APIRouter
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Query, APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field, constr
 from dotenv import load_dotenv
 from pymilvus import Collection
+from starlette.responses import JSONResponse, FileResponse
+from starlette.routing import Mount
+from starlette.staticfiles import StaticFiles
+from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
 # from frontend.backend.services.chat_service import ChatService, RAGError, SearchError, GenerationError # Commented out - remove later
 from src.modules.generation.slides import create_presentation # Fixed import
@@ -29,7 +33,7 @@ from src.modules.research.research import create_research_report # Fixed import
 from src.modules.vector_store.milvus_ops import connect_milvus, init_collection, delete_document, ensure_connection, update_metadata_in_vector_store # Fixed import
 from src.modules.config.config import CONFIG # Fixed import
 from src.modules.ingestion.ingest import upload_document # Fixed import
-from src.modules.generation.generate import chat_with_knowledge, get_openai_client # Import the refactored chat function and get_openai_client
+from src.modules.generation.generate import get_openai_client, chat_with_knowledge_ws # Import the refactored chat function and get_openai_client
 
 # Load env vars from root .env.local
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../../.env.local")) # Fixed path
@@ -197,154 +201,109 @@ def health_check():
     """Health check—system's vibing! 🎯"""
     return {"status": "healthy", "message": "4090's ready to shred! 🔥"}
 
-@api_router.post("/chat")
-async def chat(request: ChatRequest):
-    """Handle chat requests, supporting both streaming and non-streaming modes."""
-
-    # Define the streaming generator function
-    async def stream_generator():
-        try:
-            async for event in chat_with_knowledge(
-                query=request.query,
-                filename=request.filename,
-                knowledge_only=request.knowledge_only,
-                use_web=request.use_web,
-                model=request.model, # Pass through model/provider if specified
-                provider=request.provider,
-                temperature=CONFIG.chat.temperature # Use configured temp
-            ):
-                # Format as Server-Sent Event (SSE)
-                yield f"data: {json.dumps(event)}\n\n"
-            # Send a final empty message or a specific 'end' event if needed
-            # yield "data: {\"type\": \"end\"}\n\n"
-        except Exception as e:
-            logger.exception(f"Error during chat stream generation: {e}")
-            error_event = {"type": "error", "data": f"An internal error occurred: {str(e)}"}
-            yield f"data: {json.dumps(error_event)}\n\n"
-
-    # Handle streaming request
-    if request.stream:
-        logger.info(f"Streaming chat request received: query='{request.query[:50]}...'")
-        return StreamingResponse(stream_generator(), media_type="text/event-stream")
-    
-    # Handle non-streaming request
-    else:
-        logger.info(f"Non-streaming chat request received: query='{request.query[:50]}...'")
-        final_response = ""
-        sources_data = []
-        try:
-            async for event in chat_with_knowledge(
-                query=request.query,
-                filename=request.filename,
-                knowledge_only=request.knowledge_only,
-                use_web=request.use_web,
-                model=request.model,
-                provider=request.provider,
-                temperature=CONFIG.chat.temperature
-            ):
-                if event.get("type") == "sources":
-                    sources_data = event.get("data", [])
-                elif event.get("type") == "response":
-                    final_response += event.get("data", "")
-                elif event.get("type") == "error":
-                    # If an error occurs mid-stream in non-streaming mode, return it as an HTTP error
-                    raise HTTPException(status_code=500, detail=event.get("data", "Unknown generation error"))
-            
-            return NonStreamChatResponse(response=final_response, sources=sources_data)
-        
-        except HTTPException as http_exc:
-            # Re-raise HTTP exceptions caused by errors during generation
-            raise http_exc
-        except Exception as e:
-            logger.exception(f"Error processing non-streaming chat request: {e}")
-            raise HTTPException(status_code=500, detail=f"An internal error occurred: {str(e)}")
-
-@api_router.get("/chat")
-async def chat_get(
-    query: str = Query(..., description="The query to search for"),
-    filename: Optional[str] = Query(None, description="Optional filename to filter chunks"),
-    knowledge_only: bool = Query(True, description="If True, only respond based on found knowledge"),
-    use_web: bool = Query(False, description="Whether to include web search results"),
-    stream: bool = Query(True, description="Whether to stream the response"),
-    model: Optional[str] = Query(None, description="The model to use for generation"),
-    provider: Optional[str] = Query(None, description="The provider to use (ollama or openai)")
-):
-    """Streams chat responses via GET—for EventSource compatibility."""
+@api_router.websocket("/ws/chat")
+async def websocket_chat_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    logger.info("WebSocket connection accepted.")
     try:
-        # Check if file exists if filename provided
-        if filename:
-            file_path = STORAGE_DIR / filename
-            if not file_path.exists():
-                return JSONResponse(
-                    status_code=404,
-                    content={"error": f"File not found: {filename}"}
-                )
+        # Receive the raw message dictionary first
+        message = await websocket.receive()
+        # --- DETAILED LOGGING ADDED ---
+        logger.info(f"[WS Endpoint] Received initial message. Type: {type(message)}, Content: {message}")
+        if isinstance(message, dict):
+            logger.info(f"[WS Endpoint] Message keys: {list(message.keys())}")
+            if 'type' in message:
+                 logger.info(f"[WS Endpoint] Message type field: {message['type']}")
+            if 'bytes' in message:
+                 logger.info(f"[WS Endpoint] Message bytes field type: {type(message['bytes'])}")
+            if 'text' in message:
+                 logger.info(f"[WS Endpoint] Message text field type: {type(message['text'])}")
+        # --- END DETAILED LOGGING ---
+        logger.info(f"Received initial raw message object: {message}")
 
-        # Get model and provider from request or use defaults
-        model_to_use = model or CONFIG.chat.model
-        provider_to_use = provider or CONFIG.chat.provider
+        raw_initial_data = None
+        if isinstance(message, dict) and message.get("type") == "websocket.receive":
+            # Check if it has text or bytes
+            if "text" in message:
+                raw_initial_data = message["text"]
+                logger.info(f"Extracted initial text data: {raw_initial_data}")
+            elif "bytes" in message:
+                # If data comes as bytes, decode assuming utf-8
+                raw_initial_data = message["bytes"].decode('utf-8')
+                logger.warning(f"Received initial data as bytes, decoded to: {raw_initial_data}")
+            else:
+                 logger.error("Received message object lacks 'text' or 'bytes' field.")
+                 await websocket.close(code=1003, reason="Unsupported initial message format")
+                 return
+        elif message["type"] == "websocket.disconnect":
+             logger.warning(f"Client disconnected immediately after connect: {message.get('code', 'N/A')}")
+             return # Exit cleanly
+        else:
+            logger.error(f"Received unexpected initial message type: {message['type']}")
+            await websocket.close(code=1003, reason="Unexpected initial message type")
+            return
 
-        # Define a generator that properly formats the responses for SSE - same as in POST endpoint
-        async def format_sse_response():
+        if raw_initial_data:
             try:
-                # Send an initial message to establish the connection
-                yield "data: {\"status\":\"connected\"}\n\n"
-                logging.info("SSE connection established, sent initial message")
-                
-                chat_generator = chat_with_knowledge(
-                    query=query, 
-                    filename=filename,
-                    knowledge_only=knowledge_only,
-                    use_web=use_web,
-                    model=model_to_use,
-                    provider=provider_to_use
+                # Parse the text as JSON
+                params = json.loads(raw_initial_data)
+                logger.info(f"Parsed initial parameters: {params}")
+
+                # --- Call the actual handler, passing ONLY expected args ---
+                await chat_with_knowledge_ws(
+                    websocket=websocket,
+                    query=params.get("query"), # Required
+                    filename=params.get("filename"), # Optional
+                    knowledge_only=params.get("knowledge_only", True), # Optional w/ default
+                    use_web=params.get("use_web", False), # Optional w/ default
+                    model=params.get("model", CONFIG.chat.model), # Optional w/ default
+                    provider=params.get("provider", CONFIG.chat.provider), # Optional w/ default
+                    temperature=params.get("temperature", CONFIG.chat.temperature), # Optional w/ default
+                    filters=params.get("filters") # Optional
+                    # Ignoring chat_history_id, stream, etc.
                 )
+                logger.info("chat_with_knowledge_ws handler finished.")
 
-                async for data in chat_generator:
-                    # Make sure data is properly formatted as valid JSON
-                    try:
-                        # Directly dump the data (assuming it's a dict) to a JSON string
-                        clean_json = json.dumps(data)
-                        # Format according to SSE standards: "data: {JSON}\\n\\n"
-                        sse_message = f"data: {clean_json}\\n\\n"
-                        logging.info(f"Sending SSE message: {sse_message.strip()[:100]}...")
-                        yield sse_message
-                    except (TypeError, json.JSONDecodeError) as e: # Catch TypeError too
-                        logging.error(f"Error processing or serializing data: {data}, Error: {str(e)}")
-                        error_message = f"data: {json.dumps({'error': 'Server error: Invalid response format from generator'})}\\n\\n"
-                        logging.info(f"Sending error message: {error_message.strip()}")
-                        yield error_message
-
-                logging.info("Stream ended normally")
+            except json.JSONDecodeError as json_err:
+                logger.error(f"Failed to parse initial message JSON: {json_err}")
+                if websocket.client_state == WebSocketState.CONNECTED:
+                    await websocket.close(code=1008, reason="Invalid JSON format for initial message")
             except Exception as e:
-                logging.error(f"Stream error: {str(e)}")
-                # Format the error message as a proper SSE event
-                error_event_data = {"type": "error", "data": str(e)}
-                error_message = f"data: {json.dumps(error_event_data)}\n\n"
-                logging.info(f"Sending exception error message: {error_message.strip()}")
-                yield error_message
-                logging.info("Sent error event, stream ending due to error")
+                logger.exception(f"Error processing initial message or in handler: {e}")
+                if websocket.client_state == WebSocketState.CONNECTED:
+                    await websocket.close(code=1011, reason="Internal server error during processing")
+        else:
+             # This case should theoretically not be reached if checks above are correct
+             logger.error("raw_initial_data was None after processing receive message.")
+             if websocket.client_state == WebSocketState.CONNECTED:
+                 await websocket.close(code=1011, reason="Internal processing error")
 
-        # Ensure proper headers for SSE
-        return StreamingResponse(
-            format_sse_response(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",  # For Nginx
-                "Access-Control-Allow-Origin": "*",  # CORS header
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, Authorization",
-                "Access-Control-Max-Age": "86400"  # 24 hours
-            }
-        )
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected (detected by endpoint). ")
     except Exception as e:
-        logging.error(f"Unexpected error in GET chat: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Unexpected error: {str(e)}"}
-        )
+        # Catch errors during the initial receive or accept
+        logger.exception(f"Error during initial WebSocket setup or receive: {e}")
+        # Attempt to close gracefully if possible
+        try:
+            # Check connection state before attempting final close
+            if websocket.client_state == WebSocketState.CONNECTED:
+                await websocket.close(code=1011)
+        except RuntimeError as re:
+            # Catch the specific error if close is called on an already closed/closing socket
+            if "Cannot call \"send\" once a close message has been sent." in str(re):
+                logger.warning("Attempted to close WebSocket in final exception handler, but it was already closed.")
+            else:
+                # Log other RuntimeErrors if they occur during close
+                logger.exception(f"RuntimeError during final WebSocket close attempt: {re}")
+        except Exception as close_exc:
+            # Log other unexpected exceptions during the close attempt
+            logger.exception(f"Unexpected exception during final WebSocket close attempt: {close_exc}")
+            # Pass, as the primary error 'e' is already logged.
+            pass
+
+    # Log endpoint exit
+    logger.info("Exiting websocket_chat_endpoint function scope.")
 
 @api_router.options("/presentation")
 async def options_presentation():
@@ -727,7 +686,11 @@ async def get_openai_models():
 
             # 2. Filter for likely compatible text generation models
             compatible_models_data = []
-            exclusion_terms = ["embedding", "image", "audio", "vision", "instruct", "whisper", "tts", "dall-e", "edit"]
+            exclusion_terms = [
+                "embedding", "image", "audio", "vision", "instruct", 
+                "whisper", "tts", "dall-e", "edit", "transcribe",
+                "search", "preview" # Add search and preview
+            ]
             for model in models_list.data:
                 model_id_lower = model.id.lower()
                 # Keep if it contains 'gpt' and doesn't contain any exclusion terms
@@ -811,10 +774,6 @@ app.include_router(api_router, prefix="/api/v1")
 logger.info("API router included.")
 
 if __name__ == "__main__":
-    # The Dockerfile CMD specifies host and port. 
-    # Keep this block minimal for direct execution if needed, but 
-    # the primary execution path via Docker uses the CMD directive.
-    logger.info("Starting server via __main__ block (intended for direct execution)... Host/Port set by Docker CMD when run in container.")
-    # Simplified run for direct execution case, relying on uvicorn defaults or CLI args if run directly.
-    # Docker execution will use CMD ["uvicorn", ..., "--host", "0.0.0.0", "--port", "8000"]
-    uvicorn.run("src.api.app:app", reload=True) # Added reload for potential direct dev use 
+    port = int(os.getenv("BACKEND_PORT", 8000))
+    logger.info(f"Starting VibeRAG backend server on port {port} 🔥")
+    uvicorn.run(app, host="0.0.0.0", port=port) # Removed reload=True for stability 

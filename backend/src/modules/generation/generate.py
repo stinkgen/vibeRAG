@@ -13,6 +13,8 @@ import asyncio
 import os
 from openai import AsyncOpenAI
 import openai
+from fastapi import WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 
 from src.modules.config.config import CONFIG
 from src.modules.generation.exceptions import GenerationError
@@ -111,28 +113,34 @@ async def generate_with_provider(
                                 continue
                     
         elif provider == "openai":
-            # Get OpenAI client
             openai_client = get_openai_client()
-                
+            logger.info(f"[generate_with_provider] Attempting OpenAI call. Model: {model}, Temp: {temperature}")
+            logger.debug(f"[generate_with_provider] Messages: {messages}") # Log the messages being sent
+            
             try:
-                # Attempt to call OpenAI Chat API first
-                logger.info(f"Attempting chat completions with model: {model}")
+                logger.info(f"[generate_with_provider] Attempting chat completions with model: {model}")
                 stream = await openai_client.chat.completions.create(
                     model=model or CONFIG.openai.default_model,
                     messages=messages,
                     temperature=temperature,
                     stream=True
                 )
+                logger.info(f"[generate_with_provider] Successfully created OpenAI stream for model: {model}")
+                
+                chunk_count = 0
                 async for chunk in stream:
-                    if chunk.choices[0].delta.content:
-                        yield chunk.choices[0].delta.content
-                logger.info(f"Successfully streamed from chat completions endpoint for model: {model}")
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        chunk_count += 1
+                        # logger.debug(f"[generate_with_provider] Yielding chunk {chunk_count}: {content}") # Very verbose, uncomment if needed
+                        yield content
+                logger.info(f"[generate_with_provider] Finished streaming {chunk_count} chunks from chat completions for model: {model}")
 
             except openai.NotFoundError as e:
                 # Check if the error is specifically the 'model not supported for chat' error
                 error_details = e.response.json()
                 if "error" in error_details and "message" in error_details["error"] and "not supported in the v1/chat/completions endpoint" in error_details["error"]["message"]:
-                    logger.warning(f"Model '{model}' not supported by chat completions endpoint. Trying v1/completions...")
+                    logger.warning(f"[generate_with_provider] Model '{model}' not supported by chat completions. Error: {e}")
                     
                     # Fallback to the v1/completions endpoint
                     # Need to format messages into a single prompt
@@ -159,8 +167,7 @@ async def generate_with_provider(
                     logger.error(f"OpenAI API Not Found error (non-chat compatibility): {e}")
                     raise GenerationError(f"OpenAI API request failed: {e}") from e
             except Exception as e:
-                # Catch other potential exceptions during the API call
-                logger.error(f"Generic error during OpenAI generation with model '{model}': {e}")
+                logger.exception(f"[generate_with_provider] Error during OpenAI chat completions stream for model '{model}': {e}") # Use logger.exception
                 raise GenerationError(f"Failed to generate response: {e}") from e
         else:
             raise ValueError(f"Unsupported provider: {provider}")
@@ -224,142 +231,160 @@ async def ollama(messages: List[Dict[str, str]], model: str = "llama2", stream: 
         logger.error(f"Ollama generation failed: {str(e)}")
         raise
 
-async def chat_with_knowledge(
+async def chat_with_knowledge_ws(
+    websocket: WebSocket,
     query: str,
     filename: Optional[str] = None,
     knowledge_only: bool = True,
     use_web: bool = False,
     model: str = CONFIG.chat.model,
     provider: ProviderType = CONFIG.chat.provider,
-    temperature: float = CONFIG.chat.temperature
-) -> AsyncGenerator[Dict[str, Any], None]:
-    """Chat with an LLM using knowledge from your docs, yielding structured events.
+    temperature: float = CONFIG.chat.temperature,
+    filters: Optional[List[Dict]] = None,
+    chat_history_id: Optional[str] = None
+):
+    """Chat with an LLM using knowledge, sending events over WebSocket."""
+    logger.info(f"Starting chat_with_knowledge_ws: query='{query[:30]}...', filename={filename}, knowledge_only={knowledge_only}, use_web={use_web}, history_id={chat_history_id}")
+    context_text = ""
+    sources = []
+    web_results = []
 
-    Args:
-        query: The user's question or prompt
-        filename: Optional filename to filter chunks
-        knowledge_only: If True, only respond based on found knowledge
-        use_web: Whether to include web search results
-        model: Name of the model to use
-        provider: LLM provider
-        temperature: Generation temperature
-
-    Yields:
-        Dicts representing events: 
-        {'type': 'sources', 'data': [...]}
-        {'type': 'response', 'data': '...'}
-        {'type': 'error', 'data': '...'}
-    """
-    from src.modules.retrieval.search import semantic_search, google_search
-    
-    logger.info(f"Starting chat_with_knowledge: query='{query[:50]}...', filename={filename}, use_web={use_web}")
-
-    try:
-        # 1. Get relevant chunks
-        try:
-            chunks = semantic_search(query, top_k=CONFIG.chat.chunks_limit, filename=filename)
-            logger.info(f"Found {len(chunks)} relevant chunks")
-        except Exception as e:
-            logger.error(f"Semantic search failed: {e}")
-            yield {"type": "error", "data": f"Failed to retrieve information: {e}"}
-            return
-
-        # 2. Get web results if requested
-        web_results = []
-        if use_web:
+    # --- Existing logic for conditional search --- 
+    perform_search = knowledge_only or filename or use_web or (filters is not None and len(filters) > 0)
+    if perform_search:
+        logger.info("Search required based on parameters (knowledge_only, filename, filters or use_web)")
+        # 1. Semantic Search
+        if (filename or knowledge_only or (filters is not None and len(filters) > 0)) and not (use_web and not knowledge_only):
+            logger.info(f"Performing semantic search. Filters: {filters if filters else 'N/A'}")
             try:
-                web_results = google_search(query)
-                logger.info(f"Found {len(web_results)} web results")
+                # Import moved inside to avoid circular dependency if search uses generate
+                from src.modules.retrieval.search import semantic_search
+                search_results = await semantic_search(
+                    query,
+                    filename_filter=filename,
+                    limit=CONFIG.vector_store.search_limit,
+                    filters=filters
+                )
+                logger.info(f"Semantic search returned {len(search_results)} results.")
+                if search_results:
+                    # Extract sources with proper metadata handling
+                    sources_data = []
+                    for r in search_results:
+                        metadata = r.get('metadata', {})
+                        src_filename = metadata.get('filename', 'unknown')
+                        src_page = metadata.get('page', '?')
+                        sources_data.append({"filename": src_filename, "page": src_page})
+                    
+                    # Remove duplicates based on filename and page
+                    unique_sources = []
+                    seen = set()
+                    for item in sources_data:
+                        identifier = (item['filename'], item['page'])
+                        if identifier not in seen:
+                            unique_sources.append(item)
+                            seen.add(identifier)
+                    
+                    context_text += "Relevant Documents:\n" + "\n".join([r['text'] for r in search_results])
+                    # Send sources over WebSocket
+                    await websocket.send_json({"type": "sources", "data": unique_sources})
             except Exception as e:
-                logger.warning(f"Google search failed: {e}") # Log as warning, proceed without web results
-                # Optionally yield a warning to the client?
-                # yield {"type": "warning", "data": "Web search failed, proceeding without it."} 
-
-        # 3. Handle no context found
-        if not chunks and not web_results:
-            if knowledge_only:
-                logger.warning("No knowledge found and knowledge_only=True")
-                yield {"type": "error", "data": "I don't have any relevant information to answer your question based on the available documents."}
+                logger.exception(f"Semantic search failed: {e}")
+                await websocket.send_json({"type": "error", "data": f"Failed to retrieve information: {e}"}) # Send error via WS
                 return
-            else:
-                logger.info("No context found, proceeding with query only.")
-                # Proceed without specific context
+        # 2. Web Search
+        if use_web:
+            logger.info("Performing web search...")
+            try:
+                # Import moved inside
+                from src.modules.retrieval.search import web_search
+                web_results = await web_search(query)
+                if web_results:
+                    context_text += "\n\nWeb Search Results:\n" + "\n".join([f"Title: {r['title']}\nSnippet: {r['snippet']}" for r in web_results])
+                    # Optionally send web sources over WebSocket
+                    # await websocket.send_json({"type": "web_sources", "data": web_results})
+            except Exception as e:
+                logger.exception(f"Web search failed: {e}")
+                # Optionally send warning/error over WebSocket
+                # await websocket.send_json({"type": "warning", "data": f"Web search failed: {e}"})
+        # 3. Check if context is sufficient
+        if knowledge_only and not search_results:
+            logger.info("Knowledge only mode, but no relevant documents found.")
+            # Send message and close or return? For now, send and return.
+            await websocket.send_json({"type": "response", "data": "I don\'t have any relevant information in my knowledge base to answer that question."})
+            await websocket.send_json({"type": "end", "data": "No relevant knowledge found."}) # Send end event
+            return
+    else:
+        logger.info("Skipping knowledge/web search based on parameters.")
 
-        # 4. Extract and yield sources
-        sources_list = []
-        for chunk in chunks:
-            metadata = chunk.get("metadata", {})
-            if isinstance(metadata, str):
-                try:
-                    metadata = json.loads(metadata)
-                except json.JSONDecodeError:
-                    metadata = {}
-            source_filename = metadata.get('filename', 'unknown')
-            source_page = metadata.get('page', '?')
-            sources_list.append({"type": "document", "filename": source_filename, "page": source_page})
+    # --- Prepare messages for LLM --- 
+    system_prompt = (
+        "You are a helpful AI assistant. Use the provided context (documents and web results) "
+        "to answer the user's question accurately and concisely. "
+        # Removed citation instruction as sources are sent separately
+        "If the context doesn\'t contain relevant information, state that clearly."
+    )
+    context_for_prompt = context_text if context_text else "No specific context was provided."
+    user_prompt = f"Context:\n{context_for_prompt}\n\nQuestion: {query}"
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
 
-        for result in web_results:
-             sources_list.append({"type": "web", "title": result.get('title', ''), "link": result.get('link', '')})
-        
-        if sources_list:
-            yield {"type": "sources", "data": sources_list}
-
-        # 5. Format context for LLM
-        context_parts = []
-        for i, chunk in enumerate(chunks):
-            text = chunk['text'].strip()
-            metadata = chunk.get("metadata", {})
-            if isinstance(metadata, str): # Redundant parsing, but keep for context string
-                try: metadata = json.loads(metadata)
-                except: metadata = {}
-            filename_ctx = metadata.get('filename', 'unknown file')
-            page_ctx = metadata.get('page', '?')
-            context_parts.append(f"Source {i+1} ({filename_ctx}, page {page_ctx}):\n{text}")
-
-        if web_results:
-            context_parts.append("\n--- Web Results ---")
-            for i, result in enumerate(web_results):
-                context_parts.append(f"Web Result {i+1} ({result['title']}):\n{result['snippet']}")
-
-        context = "\n\n".join(context_parts)
-        if not context:
-             context = "No specific context was found."
-        
-        # 6. Build messages for the LLM
-        system_prompt = (
-            "You are a helpful AI assistant. Use the provided context (documents and web results) "
-            "to answer the user's question accurately and concisely. "
-            "Cite the sources used in your answer using the format [Source X] for documents or [Web Result X] for web results, corresponding to the numbering in the context. "
-            "If the context doesn't contain relevant information to answer the question, explicitly state that."
+    # --- Generate response and send over WebSocket --- 
+    try:
+        response_generator = generate_with_provider(
+            messages,
+            model,
+            provider,
+            temperature
         )
-        user_prompt = f"Context:\n{context}\n\nQuestion: {query}"
         
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
+        async for response_chunk in response_generator:
+            if response_chunk: # Ensure not sending empty strings
+                try:
+                    # Check connection state before sending
+                    if websocket.client_state == WebSocketState.CONNECTED:
+                        await websocket.send_json({"type": "response", "data": response_chunk})
+                    else:
+                        logger.warning("WebSocket disconnected before sending response chunk.")
+                        break # Exit loop if disconnected
+                except WebSocketDisconnect:
+                    logger.warning("WebSocket disconnected during send_json for response chunk.")
+                    break # Exit loop if disconnected
         
-        # 7. Generate response and yield chunks
+        # Send end message only if still connected
         try:
-            response_generator = generate_with_provider(
-                messages,
-                model,
-                provider,
-                temperature
-            )
-            
-            async for response_chunk in response_generator:
-                if response_chunk: # Ensure not yielding empty strings
-                    yield {"type": "response", "data": response_chunk}
-        except GenerationError as e:
-            logger.error(f"Generation failed during streaming: {e}")
-            yield {"type": "error", "data": f"LLM generation failed: {e}"}
-        except Exception as e:
-            logger.error(f"Unexpected error during generation streaming: {e}")
-            yield {"type": "error", "data": f"An unexpected error occurred during generation: {e}"}
+            if websocket.client_state == WebSocketState.CONNECTED:
+                await websocket.send_json({"type": "end", "data": "Generation complete."}) 
+                logger.info("LLM generation finished, sent end event.")
+            else:
+                 logger.warning("WebSocket disconnected before sending end event.")
+        except WebSocketDisconnect:
+            logger.warning("WebSocket disconnected during send_json for end event.")
 
+    except GenerationError as e:
+        logger.error(f"Generation failed during streaming: {e}")
+        try:
+            # Check connection state before sending error
+            if websocket.client_state == WebSocketState.CONNECTED:
+                 await websocket.send_json({"type": "error", "data": f"LLM generation failed: {e}"}) 
+            else:
+                 logger.warning("WebSocket disconnected before sending GenerationError.")
+        except WebSocketDisconnect:
+             logger.warning("WebSocket disconnected during send_json for GenerationError.")
+    except WebSocketDisconnect: 
+        # Explicitly catch disconnects that might happen *during* generate_with_provider iteration
+        logger.warning("WebSocket disconnected during generate_with_provider iteration.")
     except Exception as e:
-        logger.exception(f"Unhandled error in chat_with_knowledge: {e}") # Use logger.exception to include traceback
-        yield {"type": "error", "data": f"An unexpected error occurred: {e}"} 
+        logger.exception(f"Unexpected error during generation streaming: {e}")
+        try:
+            # Check connection state before sending error
+            if websocket.client_state == WebSocketState.CONNECTED:
+                 await websocket.send_json({"type": "error", "data": f"An unexpected error occurred during generation: {e}"})
+            else:
+                 logger.warning("WebSocket disconnected before sending generic Exception error.")
+        except WebSocketDisconnect:
+            logger.warning("WebSocket disconnected during send_json for generic Exception error.")
 
 # Types locked—code's sharp as fuck! 🔥 

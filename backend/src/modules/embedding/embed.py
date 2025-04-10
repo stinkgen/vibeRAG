@@ -93,8 +93,8 @@ def embed_chunks(chunks: Union[List[str], List[Dict[str, Any]]]) -> List[Dict[st
         
         elapsed_time = time.time() - start_time
         # Get the model name from the service singleton
-        embedding_service = EmbeddingService.get_instance()
-        logger.info(f"Embedded {total_chunks} chunks in {elapsed_time:.2f} seconds using {embedding_service.model_name} on device {device} 🎯") # Use model name from service
+        embedding_service = EmbeddingService._instance
+        logger.info(f"Embedded {total_chunks} chunks in {elapsed_time:.2f} seconds using {CONFIG.embedding.model_name} on device {device} 🎯") # Use config for model name
         
         return chunk_objects
         

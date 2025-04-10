@@ -108,6 +108,7 @@ const Chat: React.FC = () => {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const webSocketRef = useRef<WebSocket | null>(null);
   const saveTimeoutRef = useRef<number | null>(null);
   const lastSavedMessagesRef = useRef<string>('');
   
@@ -316,19 +317,8 @@ const Chat: React.FC = () => {
   
   // Function to start a new chat
   const startNewChat = () => {
-    // Close any existing connection
-    if (eventSourceRef.current) {
-      console.log("Closing EventSource in startNewChat");
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-    
-    // Clear the save timeout
-    if (saveTimeoutRef.current !== null) {
-      window.clearTimeout(saveTimeoutRef.current);
-      saveTimeoutRef.current = null;
-    }
-    
+    console.log("Starting a new chat session...");
+    closeWebSocket(); // Close existing WebSocket connection
     setMessages([]);
     setActiveHistoryId(null);
     setQuery('');
@@ -476,22 +466,24 @@ const Chat: React.FC = () => {
     fetchConfig();
   }, []);
   
-  // Cleanup function for EventSource
+  // Cleanup WebSocket connection on component unmount or when starting a new chat
   useEffect(() => {
     return () => {
-      if (eventSourceRef.current) {
-        console.log("Closing EventSource on component unmount");
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
-      
-      // Also clear any pending save timeout
-      if (saveTimeoutRef.current !== null) {
-        window.clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = null;
+      if (webSocketRef.current) {
+        console.log('[WebSocket] Closing WebSocket connection on cleanup.');
+        webSocketRef.current.close();
+        webSocketRef.current = null;
       }
     };
-  }, []);
+  }, []); // Run only on mount and unmount
+
+  const closeWebSocket = () => {
+      if (webSocketRef.current) {
+        console.log('[WebSocket] Closing WebSocket connection manually.');
+        webSocketRef.current.close();
+        webSocketRef.current = null;
+      }
+  };
 
   // Handle knowledge filter changes
   const handleFilterChange = (selectedFilters: FilterOption[]) => {
@@ -540,189 +532,188 @@ const Chat: React.FC = () => {
   }, []); // Run only once on mount
   // --- MODIFICATION END ---
 
-  // Refactored function to handle form submission (includes streaming logic)
-  const handleSubmit = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!query.trim() || loading) return;
+  // Restore the full handleSubmit function
+  // Make event optional to allow calling from onKeyDown without an event
+  const handleSubmit = (e?: React.FormEvent<HTMLFormElement>) => {
+    if (e) e.preventDefault(); // Prevent default only if event is provided
+    if (loading || query.trim() === '') return;
 
     setLoading(true);
     setError('');
-    const userMessage: Message = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: query,
-      timestamp: new Date(),
-    };
+    const currentQuery = query; // Store the query
+    setQuery(''); // Clear the input field immediately
 
-    // Add user message and pending assistant message
+    // Close existing WebSocket if any before starting
+    closeWebSocket();
+
+    // Add user message and initial assistant message (pending)
+    const assistantMessageId = Date.now().toString() + '-assistant'; // Use ID for tracking
     setMessages((prevMessages) => [
       ...prevMessages,
-      userMessage,
-      {
-        id: `assistant-${Date.now()}`,
-        role: 'assistant',
-        content: '',
-        timestamp: new Date(),
-        pending: true, // Mark as pending
-        sources: [], // Initialize sources
+      { 
+        id: Date.now().toString() + '-user', 
+        role: 'user', 
+        content: currentQuery, 
+        timestamp: new Date(), 
+        sources: [] 
       },
+      { 
+        id: assistantMessageId, 
+        role: 'assistant', 
+        content: '', 
+        sources: [], 
+        timestamp: new Date(),
+        pending: true // Mark as pending
+      }, 
     ]);
 
-    setQuery(''); // Clear input
-    if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto'; // Reset height after clearing
-    }
+    // Construct WebSocket URL (relative path to trigger proxy)
+    // Ensure the protocol is ws or wss based on window.location.protocol
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'; // Original line
+    const wsUrl = `${wsProtocol}//${window.location.host}/api/v1/ws/chat`; // Original line
 
-    // Construct query parameters for the GET request with EventSource
-    const params = new URLSearchParams({
-      query: userMessage.content,
-      knowledge_only: knowledgeOnly.toString(),
-      use_web: useWeb.toString(),
-      stream: 'true', // Backend handles streaming
-      ...(modelConfig.provider !== 'default' && modelConfig.model ? { model: modelConfig.model } : {}),
-      ...(modelConfig.provider !== 'default' ? { provider: modelConfig.provider } : {}),
-      ...(filename ? { filename: filename } : {})
-    });
+    // --- TEMPORARY CHANGE: Connect directly to backend --- 
+    // const wsUrl = `ws://localhost:8000/api/v1/ws/chat`; // Commented out
+    // --------------------------------------------------
+
+    // console.log(`[WebSocket] Connecting directly to ${wsUrl}`); // Comment out direct log
+    console.log(`[WebSocket] Connecting to proxy at ${wsUrl}`); // Log proxy connection
 
     try {
-      const url = `${API_ENDPOINTS.CHAT}?${params.toString()}`;
-      console.log("Initiating SSE connection to:", url);
-      
-      // Close existing connection if any
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
+      const socket = new WebSocket(wsUrl);
+      webSocketRef.current = socket;
 
-      // Use EventSource for SSE
-      const eventSource = new EventSource(url); 
-      eventSourceRef.current = eventSource;
-      let currentAssistantMessageId: string | null = null;
-      let sourcesReceived: any[] = [];
-      let receivedAnyData = false; // Flag to track if any message (even sources) was received
-
-      eventSource.onopen = () => {
-        console.log("SSE connection opened.");
-        setLoading(true); // Ensure loading is true when connection opens
+      socket.onopen = () => {
+        console.log('[WebSocket] Connection opened.');
+        // Prepare the initial message payload based on backend expectations
+        const initialPayload = {
+          query: currentQuery,
+          knowledge_only: knowledgeOnly,
+          use_web: useWeb,
+          provider: modelConfig.provider,
+          model: modelConfig.model,
+          filters: knowledgeFilters, // Send selected filters
+          chat_history_id: activeHistoryId, // Send active chat ID if available
+          // Add any other parameters expected by the backend WebSocket endpoint
+        };
+        console.log('[WebSocket] Sending initial payload:', initialPayload);
+        socket.send(JSON.stringify(initialPayload));
       };
 
-      eventSource.onmessage = (event) => {
-        receivedAnyData = true;
+      socket.onmessage = (event) => {
+        // console.log('[WebSocket] Raw message received:', event.data);
         try {
-          console.log("SSE message received:", event.data);
-          const parsedData = JSON.parse(event.data);
+          const data = JSON.parse(event.data);
+          // console.log('[WebSocket] Parsed message data:', data);
 
           setMessages((prevMessages) => {
-            const lastMessage = prevMessages[prevMessages.length - 1];
-            // Find the correct pending message ID
-            currentAssistantMessageId = lastMessage?.role === 'assistant' && lastMessage.pending ? lastMessage.id : null;
-
-            if (!currentAssistantMessageId) {
-                console.warn("Could not find pending assistant message to update.");
-                return prevMessages; 
-            }
-
-            // Update the last assistant message
             const updatedMessages = [...prevMessages];
-            const assistantMsgIndex = updatedMessages.findIndex(msg => msg.id === currentAssistantMessageId);
+            const assistantMsgIndex = updatedMessages.findIndex(msg => msg.id === assistantMessageId);
 
-            if (assistantMsgIndex === -1) return prevMessages; // Safety check
-
-            const assistantMsg = { ...updatedMessages[assistantMsgIndex] }; // Create copy
-            
-            // Mark as not pending once first *meaningful* event arrives
-            if (parsedData.type === 'response' || parsedData.type === 'sources' || parsedData.type === 'error') {
-                assistantMsg.pending = false; 
-            }
-
-            switch (parsedData.type) {
-              case 'sources':
-                sourcesReceived = parsedData.data || [];
-                assistantMsg.sources = sourcesReceived.map((s, index) => 
-                    s.type === 'document' ? `[Source ${index + 1}] ${s.filename} (Page ${s.page})` :
-                    s.type === 'web' ? `[Web Result ${index + 1}] ${s.title}` :
-                    'Unknown Source'
-                );
-                console.log("Sources received and processed:", assistantMsg.sources);
-                break;
-              case 'response':
-                assistantMsg.content += parsedData.data;
-                break;
-              case 'error':
-                console.error("Error from backend stream:", parsedData.data);
-                setError(parsedData.data);
-                // Append error to content for visibility
-                assistantMsg.content += (assistantMsg.content ? '\n\n' : '') + `**Error:** ${parsedData.data}`;
-                // Don't close connection here, let onerror handle it
-                break;
-              default:
-                console.warn("Unknown event type received:", parsedData.type);
+            if (assistantMsgIndex === -1) {
+                console.warn('[WebSocket] Could not find assistant message to update.');
+                return prevMessages; // Should not happen ideally
             }
             
-            updatedMessages[assistantMsgIndex] = assistantMsg; // Update the message in the array
+            const assistantMsg = { ...updatedMessages[assistantMsgIndex] }; // Clone to modify
+
+            // Make assistant message non-pending as soon as we get *any* data
+            if (assistantMsg.pending) {
+                assistantMsg.pending = false;
+            }
+
+            switch (data.type) {
+                case 'sources':
+                    assistantMsg.sources = data.data; // Assuming data structure { type: 'sources', data: [...] }
+                    // console.log('[WebSocket] Updated sources:', assistantMsg.sources);
+                    break;
+                case 'response':
+                    assistantMsg.content += data.data; // Assuming data structure { type: 'response', data: "..." }
+                    // console.log('[WebSocket] Appended response content chunk.');
+                    break;
+                case 'error':
+                    console.error('[WebSocket] Error message received:', data.data);
+                    const errorText = data.data?.startsWith('LLM generation failed:') 
+                                        ? data.data 
+                                        : `**Error:** ${data.data || 'Unknown error from backend.'}`;
+                    assistantMsg.content = errorText;
+                    setError(data.data || 'Unknown error from backend'); // Set top-level error state
+                    setLoading(false);
+                    closeWebSocket(); // Close socket on backend error signal
+                    break;
+                case 'end': // Backend signals end of stream
+                    console.log('[WebSocket] Received end signal from backend.');
+                    setLoading(false);
+                    closeWebSocket(); // Close socket explicitly
+                    break;
+                // Handle other message types if the backend sends them
+                default:
+                    console.warn('[WebSocket] Unknown message type received:', data.type, data);
+            }
+            
+            updatedMessages[assistantMsgIndex] = assistantMsg;
             return updatedMessages;
           });
 
         } catch (parseError) {
-          console.error("Failed to parse SSE message data:", event.data, parseError);
-          setError('Failed to process response from server.');
-          // Close connection on parsing error
-          eventSource.close(); 
+          console.error('[WebSocket] Failed to parse message JSON:', event.data, parseError);
+          setError('Received malformed data from server.');
+          setMessages((prevMessages) => { // Update UI to show error state
+            const updatedMessages = [...prevMessages];
+            const assistantMsgIndex = updatedMessages.findIndex(msg => msg.id === assistantMessageId);
+            if (assistantMsgIndex !== -1) {
+                updatedMessages[assistantMsgIndex].content = "**Error:** Failed to process server message.";
+                updatedMessages[assistantMsgIndex].pending = false;
+            }
+            return updatedMessages;
+          });
           setLoading(false);
-           // Mark the message as non-pending with an error
-           setMessages((prevMessages) => {
-              const lastMessage = prevMessages[prevMessages.length - 1];
-               if (lastMessage?.role === 'assistant' && lastMessage.pending) {
-                   const updatedMessages = [...prevMessages];
-                    const assistantMsgIndex = updatedMessages.findIndex(msg => msg.id === lastMessage.id);
-                    if(assistantMsgIndex !== -1) {
-                       updatedMessages[assistantMsgIndex] = {
-                           ...lastMessage,
-                           pending: false,
-                           content: lastMessage.content + "\n\n**Error:** Failed to parse server response."
-                       };
-                    }
-                   return updatedMessages;
-               }
-               return prevMessages;
-           });
+          closeWebSocket(); // Close socket on parsing error
         }
       };
 
-      eventSource.onerror = (error) => {
-        console.error("SSE connection error:", error);
-        // Only set general connection error if we haven't received *any* data yet
-        if (!receivedAnyData) {
-             setError('Connection error with the server.');
-        }
+      socket.onerror = (error) => {
+        console.error('[WebSocket] Connection error:', error);
+        setError('WebSocket connection error. Please check the server and network.');
         setLoading(false);
-        // Mark the last message as non-pending if it still is
-        setMessages((prevMessages) => {
-           const lastMessage = prevMessages[prevMessages.length - 1];
-           if (lastMessage?.role === 'assistant' && lastMessage.pending) {
-               const updatedMessages = [...prevMessages];
-               const assistantMsgIndex = updatedMessages.findIndex(msg => msg.id === lastMessage.id);
-                if(assistantMsgIndex !== -1) {
-                    updatedMessages[assistantMsgIndex] = {
-                        ...lastMessage,
-                        pending: false,
-                        // Append connection failed error only if no content yet and no specific error received
-                        content: lastMessage.content || !error ? (lastMessage.content + "\n\n**Error:** Connection failed.") : lastMessage.content
-                    };
-                }
-               return updatedMessages;
-           }
-           return prevMessages;
+        setMessages((prevMessages) => { // Update UI to show error state
+            const updatedMessages = [...prevMessages];
+            const assistantMsgIndex = updatedMessages.findIndex(msg => msg.id === assistantMessageId);
+            if (assistantMsgIndex !== -1 && updatedMessages[assistantMsgIndex].pending) { 
+                updatedMessages[assistantMsgIndex].content = "**Error:** Connection failed.";
+                updatedMessages[assistantMsgIndex].pending = false;
+            }
+            return updatedMessages;
         });
-        eventSource.close();
-        eventSourceRef.current = null;
+        webSocketRef.current = null; // Clear ref on error
       };
 
-    } catch (err: any) {
-      console.error("Error initiating SSE request:", err);
-      setError(err.message || 'Failed to initiate connection.');
+      socket.onclose = (event) => {
+        console.log(`[WebSocket] Connection closed. Code: ${event.code}, Reason: ${event.reason || 'N/A'}`);
+        setLoading(false);
+        // Ensure the last message isn't stuck in pending state if closed unexpectedly
+        setMessages((prevMessages) =>
+            prevMessages.map((msg) =>
+              msg.id === assistantMessageId && msg.pending ? { ...msg, pending: false, content: msg.content || "[Connection Closed]" } : msg
+            )
+        );
+        webSocketRef.current = null; // Clear the ref
+      };
+
+    } catch (err) {
+      console.error('Failed to create WebSocket connection:', err);
+      setError('Failed to initialize WebSocket.');
       setLoading(false);
-      // Remove pending message on initial submission failure
-      setMessages((prevMessages) => prevMessages.filter(msg => !msg.pending));
+       setMessages((prevMessages) => { // Update UI to show error state
+            const updatedMessages = [...prevMessages];
+            const assistantMsgIndex = updatedMessages.findIndex(msg => msg.id === assistantMessageId);
+             // Correctly check if the message exists and is pending before modifying
+            if (assistantMsgIndex !== -1 && updatedMessages[assistantMsgIndex].pending) {
+                updatedMessages[assistantMsgIndex].content = "**Error:** Could not initiate connection.";
+                updatedMessages[assistantMsgIndex].pending = false;
+            }
+            return updatedMessages;
+        });
     }
   };
 
