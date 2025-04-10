@@ -191,9 +191,6 @@ instance/
 # Scrapy stuff:
 .scrapy
 
-# Sphinx documentation
-docs/_build/
-
 # PyBuilder
 target/
 
@@ -266,8 +263,6 @@ volumes/
 .DS_Store
 
 # Ignored project files/dirs
-old_docs/
 whitepaper.pdf
 cleanup.sh
 .cursor/
- 
