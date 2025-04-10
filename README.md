@@ -126,11 +126,13 @@ vibeRAG/
 
 *   **Startup Race Condition:** Frontend might load before the backend API is fully ready after `docker compose up`. If things seem borked, a quick browser refresh usually fixes it. Backend health checks are planned.
 *   **PDF Download:** The `jspdf` presentation download feature needs more testing across different setups. Might be flaky.
+*   **Web Search:** Needs to be revalidated following major changes to message handling.
 
 ## The Upgrade Path (Roadmap) 🌌
 
 This rig is constantly evolving. Here's the upgrade manifest:
 
+*   **User and Admin Profiles:** Make vibeRAG multi-user for maximum greatness!
 *   **Better Config and LLM Management:** Add more flexible LLM router and configuration.
 *   **Agent Command Center:** Dedicated UI for managing specialized AI agents (beyond just Presentation/Research). Think tuning, orchestration, the whole nine yards.
 *   **Smarter Agents:** Jacking up the Presentation/Research agents with deeper reasoning, planning, and more tool integrations.
