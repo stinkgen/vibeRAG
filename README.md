@@ -13,192 +13,153 @@
 [![React Frontend](https://img.shields.io/badge/React-Frontend-blue?logo=react&logoColor=61DAFB)](https://reactjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strictly%20Typed-blue?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 
+---
+
+## 📸 Screenshots
+
+| [![Chat](media/vibeRAG_screen1.jpg)](media/vibeRAG_screen1.jpg) <br>_Chat Interface_ | [![Docs](media/vibeRAG_screen2.jpg)](media/vibeRAG_screen2.jpg) <br>_Document Manager_ |
+|:------------------------------------------------------------------------------------:|:--------------------------------------------------------------------------------------:|
+| [![Presentations](media/vibeRAG_screen3.jpg)](media/vibeRAG_screen3.jpg) <br>_Presentations_ | [![Research](media/vibeRAG_screen4.jpg)](media/vibeRAG_screen4.jpg) <br>_Research_ |
 
 ---
 
-**VibeRAG** ain't your grandpa's document tool. It's a Retrieval-Augmented Generation system packing a FastAPI backend punch, a slick React/TypeScript frontend, and Milvus vector muscle – all wrapped in a UI dripping with properly vibed aesthetic. Talk to your docs, generate content, make knowledge *work*.
+## TL;DR: What is VibeRAG?
 
-📸 Screenshots
+VibeRAG is a Retrieval-Augmented Generation (RAG) system for people who want to actually _own_ their knowledge workflows. Upload your docs, chat with them, generate presentations, run research, and flex on your friends with a UI that doesn't look like it was designed by a committee of lobotomized Product Managers.
 
-<details>
-<summary>Click to view screenshots</summary>
+- Multi-user, role-based, JWT-auth, Postgres-backed, per-user Milvus collections, and a no-bullshit admin panel.
+- Real-time streaming, source attribution, and a vibe so strong it could destabilize a lesser LLM.
 
-[![VibeRAG Screenshot 1](media/vibeRAG_screen1.jpg)](media/vibeRAG_screen1.jpg)
-*Chat Interface*
+---
 
-[![VibeRAG Screenshot 2](media/vibeRAG_screen2.jpg)](media/vibeRAG_screen2.jpg)
-*Document Manager*
+## 🔥 Features
 
-[![VibeRAG Screenshot 3](media/vibeRAG_screen3.jpg)](media/vibeRAG_screen3.jpg)
-*Presentations*
+- **Multi-User & Auth:** Secure JWT login, admin panel, per-user data isolation, and role-based access. No more single-user cope.
+- **Doc Devourer:** Ingest PDFs, Markdown, TXT – chunks 'em, embeds 'em, stores 'em in your own Milvus vector DB.
+- **RAG Chat Engine:** Actually _talk_ to your knowledge base. LLMs (OpenAI/Ollama) + semantic search + persistent chat history (Postgres, not localStorage cope).
+- **Source Linking:** Clickable sources on every RAG response. Know _where_ the info came from.
+- **Real-time Streaming:** WebSocket magic for instant, chunked responses.
+- **Agentic Content Gen:** Generate presentation outlines and research reports, all context-aware.
+- **Web Crawler Integration:** Pulls real-time info from the web (Google Custom Search) to augment your knowledge.
+- **Config Dashboard:** Tweak LLM settings, API keys, and check provider status on the fly.
+- **Containerized:** Docker Compose spins up the whole stack in one go.
 
-[![VibeRAG Screenshot 4](media/vibeRAG_screen4.jpg)](media/vibeRAG_screen4.jpg)
-*Research*
+---
 
-</details>
+## 🛠️ Tech Stack
 
-## Core Features 🔥
+- **Backend:** Python, FastAPI, Uvicorn, SQLAlchemy, PostgreSQL (for users, chat, sessions)
+- **Frontend:** TypeScript, React, Vite, Shadcn UI, Radix, Tailwind
+- **Vector DB:** Milvus (per-user and global collections)
+- **LLM Providers:** OpenAI, Ollama
+- **Containerization:** Docker, Docker Compose
+- **API/WS Proxy:** Node.js/Express + ws (inside the frontend container)
+- **Auth:** JWT, Bcrypt, role-based access
 
-*   **Doc Devourer:** Ingests PDFs, Markdown, TXT – chunks 'em, embeds 'em. Done.
-*   **Milvus Vector Core:** Blazing-fast similarity search for finding the *exact* context you need.
-*   **RAG Chat Engine:** Have actual *conversations* with your knowledge base. Uses LLMs (OpenAI/Ollama) fused with retrieved context. Remembers previous turns (no goldfish memory here).
-*   **Source Linking:** Know *where* the info came from. Clickable sources on RAG responses.
-*   **Real-time Streaming:** WebSocket magic for instant response delivery. No waiting.
-*   **Persistent Memory (Client-Side):** Chat history sticks around in your browser's `localStorage`.
-*   **Agentic Content Gen:**
-    *   Whip up presentation outlines based on your docs.
-    *   Generate structured research reports from knowledge + web results.
-*   **Web Crawler Integration:** Pulls real-time info from the web using Google Custom Search to augment stored knowledge.
-*   **Config Dashboard:** Tweak LLM settings, API keys, check provider status on the fly.
+---
 
-## The Tech Stack 🛠️
+## 👾 Quickstart (Docker Compose)
 
-*   **Backend:** Python | FastAPI | Uvicorn
-*   **Frontend:** TypeScript | React | Vite | `react-markdown` for slick rendering
-*   **Vector DB:** Milvus
-*   **LLM Providers:** OpenAI | Ollama
-*   **Containerization:** Docker | Docker Compose
-*   **API/WS Proxy:** Node.js/Express + `ws` (running *in* the frontend container)
+1. **Prereqs:** Docker, Docker Compose, Git.
+2. **Clone:**
+   ```bash
+   git clone https://github.com/stinkgen/vibeRAG.git
+   cd vibeRAG
+   ```
+3. **Config:**
+   ```bash
+   cp .env.example .env.local
+   # Edit .env.local with your API keys and secrets
+   ```
+   - **REQUIRED:** `OPENAI_API_KEY`
+   - **REQUIRED (for Web Search):** `GOOGLE_SEARCH_API_KEY`, `GOOGLE_SEARCH_ENGINE_ID`
+   - **RECOMMENDED:** Set a strong `JWT_SECRET_KEY`
+   - **Verify:** `OLLAMA_HOST` points to your Ollama instance if using local LLMs
+4. **Launch:**
+   ```bash
+   docker compose up --build -d
+   ```
+5. **Access:**
+   - Frontend: [http://localhost:3000](http://localhost:3000)
+   - Backend API: [http://localhost:8000](http://localhost:8000)
+6. **Shutdown:**
+   ```bash
+   docker compose down
+   # Add -v to nuke Milvus data: docker compose down -v
+   ```
 
-## Ignition Sequence 👾 (Running with Docker Compose)
+---
 
-This is the way. Launches the whole matrix: backend, frontend, Milvus cluster.
-
-**1. Gear Up:**
-
-*   Docker & Docker Compose installed.
-*   Git installed.
-
-**2. Clone the Signal:**
-
-```bash
-git clone https://github.com/stinkgen/vibeRAG.git
-cd vibeRAG
-```
-
-**3. Dial In the Environment (`.env.local`):**
-
-*   Copy the template: `cp .env.example .env.local`
-*   **CRITICAL:** Edit `.env.local` (`nano .env.local` or your weapon of choice).
-    *   **REQUIRED:** Plug in your `OPENAI_API_KEY`.
-    *   **REQUIRED (for Web Search):** Add `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_ENGINE_ID`.
-    *   **Verify:** `OLLAMA_HOST` *must* point to your Ollama instance (defaults to `http://host.docker.internal:11434` for host machine access from Docker).
-    *   Adjust `FRONTEND_PORT` / `BACKEND_PORT` only if the defaults (3000/8000) clash on your system.
-
-**4. LAUNCH!**
-
-```bash
-docker compose up --build -d
-```
-
-*   `--build`: Rebuilds images if code changed (USE THIS after pulling updates or editing Dockerfiles/dependencies).
-*   `-d`: Runs detached (in the background). Give it a minute for Milvus to boot.
-
-**5. Jack In:**
-
-*   **Frontend UI:** `http://localhost:3000` (or your custom `FRONTEND_PORT`)
-*   **Backend API (Direct):** `http://localhost:8000` (or your custom `BACKEND_PORT`)
-
-**6. Pull the Plug:**
-
-```bash
-docker compose down
-```
-
-*   Want to wipe the Milvus data too? `docker compose down -v`
-
-**7. System Diagnostics (Logs):**
-
-```bash
-docker compose logs -f          # Tail ALL service logs
-docker compose logs -f backend  # Backend specific logs
-docker compose logs -f frontend # Frontend Node.js proxy logs
-```
-
-## Dev Mode & Hot-Reloading (Backend Only) ⚡
-
-The `docker-compose.yml` is set up to mount your local `./backend/src` into the running backend container. Uvicorn's `--reload` flag means backend Python changes should auto-reload the server. Keep an eye on `docker compose logs -f backend` to see it happen.
-
-*(Frontend hot-reloading inside Docker isn't configured – the current setup builds a production bundle.)*
-
-## System Architecture Blueprint 🗺️
+## 🗺️ Architecture
 
 ```plaintext
 vibeRAG/
-├── backend/             # FastAPI Microservice (Python)
-│   ├── src/             # Core source code (modules: generation, retrieval, etc.)
+├── backend/             # FastAPI Microservice (Python, Postgres, Milvus, JWT)
+│   ├── src/             # Core source code (modules: generation, retrieval, auth, etc.)
 │   ├── Dockerfile
-│   └── requirements.txt # Python deps
+│   └── requirements.txt
 ├── frontend/            # React Frontend & Node.js Proxy
-│   ├── public/          # Static assets
-│   ├── src/             # React/TS source code (components, config, etc.)
-│   ├── Dockerfile       # Builds React app -> Copies into Node.js server image
-│   ├── package.json     # Node.js deps (React, Express, ws, etc.)
-│   └── server.js        # Node.js server: Serves React build, proxies API/WebSocket calls
-├── .env.example         # Template for environment variables
-├── .env.local           # YOUR local secrets & config (GITIGNORED!)
-├── .gitignore           # Tells Git what to ignore (node_modules, .env.local, etc.)
-├── docker-compose.yml   # Defines and orchestrates all Docker services (backend, frontend, milvus)
-├── README.md            # You are here.
-└── ...                  # Config files, maybe future scripts
+│   ├── public/
+│   ├── src/
+│   ├── Dockerfile
+│   ├── package.json
+│   └── server.js
+├── .env.example
+├── .env.local           # Your secrets (GITIGNORED)
+├── docker-compose.yml
+└── media/               # Banners, screenshots, etc.
 ```
 
-## Glitches & Gremlins (Known Issues) 🐛
+---
 
-*   **Startup Race Condition:** Frontend might load before the backend API is fully ready after `docker compose up`. If things seem borked, a quick browser refresh usually fixes it. Backend health checks are planned.
-*   **PDF Download:** The `jspdf` presentation download feature needs more testing across different setups. Might be flaky.
-*   **Web Search:** Needs to be revalidated following major changes to message handling.
+## 🐛 Known Issues
 
-## The Upgrade Path (Roadmap) 🌌
+- **Startup Race:** Frontend may load before backend is ready. If you see errors, refresh after a few seconds.
+- **PDF Download:** Presentation PDF export (`jspdf`) is still a little cursed.
+- **Web Search:** Needs revalidation after major message handling changes.
+- **GPU in Docker:** See Troubleshooting below if your backend can't see the GPU.
 
-This rig is constantly evolving. Here's the upgrade manifest:
+---
 
-*   **User and Admin Profiles:** Make vibeRAG multi-user for maximum greatness!
-*   **Better Config and LLM Management:** Add more flexible LLM router and configuration.
-*   **Agent Command Center:** Dedicated UI for managing specialized AI agents (beyond just Presentation/Research). Think tuning, orchestration, the whole nine yards.
-*   **Smarter Agents:** Jacking up the Presentation/Research agents with deeper reasoning, planning, and more tool integrations.
-*   **Sensory Overload:** Adding Text-to-Speech (TTS), Speech-to-Text (STT), and Image Generation. Interact with data in new ways.
-*   **Real Memory:** Swapping the temporary backend chat store for a persistent DB (Redis? Postgres? We'll see).
-*   **Laser-Guided RAG:** Implementing backend support for advanced search `filters`.
-*   **Instant Dev Feedback:** Configuring frontend Docker for proper hot-reloading.
-*   **Security Lockdown:** Implementing real authentication/authorization.
-*   **Battle Hardening:** Production-ready logging, monitoring, performance optimization.
-*   **Chrome & Polish:** Continuous UI/UX refinement. Max VIBE.
-*   **Bulletproof Bootup:** Better health checks for smoother startups.
+## 🌌 Roadmap
 
-## Freedom Protocol (License) 📜
+- More agent types, smarter research, and deeper LLM integration
+- Advanced search filters, better health checks, and production-grade logging/monitoring
+- More polish, more VIBE
 
-MIT License. Go nuts. Build something cool.
+---
 
-## Troubleshooting
+## 📜 License
 
-### GPU Not Detected / "Can't initialize NVML" Error in Backend Container
+MIT. Fork it, ship it, vibe with it.
 
-If the `vibe-backend` container starts but fails to utilize the GPU (e.g., PyTorch reports `CUDA Available: False` or `nvidia-smi` fails with `Can't initialize NVML: Unknown Error` inside the container), even after confirming:
+---
 
-*   Host NVIDIA drivers are installed and working (`nvidia-smi` runs on host).
-*   `nvidia-container-toolkit` is installed on the host.
-*   Docker daemon (`/etc/docker/daemon.json`) is configured for the NVIDIA runtime.
-*   `docker-compose.yml` correctly requests GPU resources (e.g., using the `deploy` key).
+## 🛠️ Troubleshooting
 
-The issue might be related to cgroup handling by the NVIDIA container runtime.
+### GPU Not Detected / "Can't initialize NVML" Error
 
-**Solution:**
+If the backend container can't see your GPU, check:
+- Host NVIDIA drivers (`nvidia-smi` works on host)
+- `nvidia-container-toolkit` installed
+- Docker daemon configured for NVIDIA runtime
+- `docker-compose.yml` requests GPU resources
 
-1.  Edit the NVIDIA container runtime configuration file on the **host** machine:
-    ```bash
-    sudo nano /etc/nvidia-container-runtime/config.toml
-    ```
-2.  Find the line `no-cgroups = true` (it might be commented out or missing, the default is often `true`).
-3.  Change it or add it to be **`no-cgroups = false`**.
-4.  Save the file.
-5.  Restart the Docker daemon:
-    ```bash
-    sudo systemctl restart docker
-    ```
-6.  Recreate the backend container:
-    ```bash
-    docker compose up --force-recreate -d vibe-backend
-    ```
+If you see `Can't initialize NVML: Unknown Error`:
+1. Edit `/etc/nvidia-container-runtime/config.toml` on the host:
+   ```
+   sudo nano /etc/nvidia-container-runtime/config.toml
+   ```
+2. Set `no-cgroups = false`
+3. Restart Docker:
+   ```
+   sudo systemctl restart docker
+   ```
+4. Recreate the backend container:
+   ```
+   docker compose up --force-recreate -d vibe-backend
+   ```
 
-This setting seems necessary on some host environments for NVML to initialize correctly within the container.
+---
+
+**WAGMI.**
