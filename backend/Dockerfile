@@ -1,41 +1,64 @@
-# Use an official Python runtime as a parent image
-FROM python:3.12-slim
+# Use a specific NVIDIA CUDA base image compatible with host driver (trying CUDA 12.1)
+FROM nvidia/cuda:12.1.1-base-ubuntu22.04
 
-# Set the working directory in the container
+# Set environment variables to make CUDA libs discoverable
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}
+# Prevent interactive prompts during apt installs
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Set the working directory
 WORKDIR /app
 
-# Install system dependencies required by libraries like OpenCV (cv2)
+# Install system dependencies 
+# Need Python prerequisites, git, and parsing tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    build-essential \
+    git \
     libgl1-mesa-glx \
     libglib2.0-0 \
+    poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv
-RUN pip install uv
+# Add deadsnakes PPA for newer Python versions and install Python 3.12
+RUN add-apt-repository ppa:deadsnakes/ppa && apt-get update
+RUN apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-dev \
+    python3.12-venv \
+    # python3-pip \ # Removed apt version of pip
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy the requirements file into the container
+# Ensure python3 points to python3.12
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
+# Bootstrap/Upgrade pip using ensurepip for Python 3.12
+RUN python3.12 -m ensurepip --upgrade
+
+# Create a virtual environment
+RUN python3.12 -m venv /opt/venv
+# Activate the virtual environment by adding it to the PATH
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Upgrade pip within the venv and install requirements
 COPY ./requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Install any needed packages specified in requirements.txt using uv
-# Using --system to install in the main environment since it's a container
-# Using --no-cache to reduce image size
-RUN uv pip install --system --no-cache -r /app/requirements.txt
+# Download the spaCy model using the venv's python
+RUN python -m spacy download en_core_web_sm
 
-# Download the spaCy model using uv
-# Note: This URL might need updating if a newer spaCy/model version is used
-RUN uv pip install --system --no-cache https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
-
-# Copy the rest of the backend source code into the container
+# Copy the rest of the backend source code
 COPY ./src /app/src
 
-# Expose the port the app runs on
-# Note: The actual port mapping is done in docker-compose.yml
+# Expose the port
 EXPOSE 8000
 
-# Define the command to run the application
-# The host 0.0.0.0 makes it accessible from outside the container
-# Use debug logging for more insight
-CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "debug"]
+# Define the command to run the application (using the venv python)
+CMD ["python", "-m", "uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "debug"]
 
 # --- DIAGNOSTIC CMD: Run simple HTTP server instead of Uvicorn --- 
 # CMD ["python", "-m", "http.server", "8000", "--bind", "0.0.0.0"] 

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <style>
+    .bg { fill: none; }
+    .line { stroke: #000; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+    .fill { fill: #000; }
+    .laptop { fill: #E0E0E0; stroke: #000; stroke-width: 1.5; }
+  </style>
+
+  <!-- Background -->
+  <rect class="bg" width="100" height="100"/>
+
+  <!-- Laptop Base -->
+  <path class="laptop" d="M 10 85 L 90 85 L 85 95 L 15 95 Z" />
+
+  <!-- Character -->
+  <g transform="translate(0, 5)">
+    <!-- Torso -->
+    <path class="fill" d="M 35 50 Q 50 60 65 50 L 68 70 Q 50 80 32 70 Z" />
+    <!-- Head -->
+    <circle class="line" cx="50" cy="30" r="20" />
+    <!-- Eyes -->
+    <circle class="fill" cx="43" cy="32" r="2.5" />
+    <circle class="fill" cx="57" cy="32" r="2.5" />
+
+    <!-- Headphones -->
+    <path class="line" d="M 30 30 Q 50 -5 70 30" /> 
+    <circle class="fill" cx="30" cy="30" r="6" />
+    <circle class="line" cx="30" cy="30" r="8" />
+    <circle class="fill" cx="70" cy="30" r="6" />
+    <circle class="line" cx="70" cy="30" r="8" />
+    <!-- Headphone Cable -->
+    <path class="line" d="M 70 38 Q 75 45 75 55 Q 75 65 70 70" />
+  </g>
+
+  <!-- Laptop Screen -->
+  <rect class="laptop" x="15" y="55" width="70" height="30" rx="2" ry="2" />
+
+</svg> 

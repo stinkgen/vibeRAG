@@ -11,10 +11,18 @@ from typing import Dict, List, Any, Optional, Union, TypedDict, Tuple
 import numpy as np
 import requests
 from dotenv import load_dotenv
-from pymilvus import Collection, connections
+from pymilvus import Collection, connections, utility
 from src.modules.vector_store.milvus_ops import search_by_tags, search_by_metadata, search_collection
 from src.modules.config.config import CONFIG  # Config's in the house! 🏠
 from src.modules.embedding.service import get_embedding_model # Import the service function
+from src.modules.vector_store.milvus_ops import connect_milvus, init_collection
+from src.modules.config.config import CONFIG, SearchConfig
+from src.modules.vector_store.milvus_ops import (
+    get_user_collection_name, 
+    get_admin_collection_name, 
+    get_global_collection_name
+)
+from src.modules.auth.database import User # Import User model
 
 # Load environment variables
 load_dotenv()
@@ -35,28 +43,14 @@ TOP_K = 10  # Default number of results to return
 # _model = None
 
 def get_embeddings(text: str) -> np.ndarray:
-    """Get embeddings for text using the shared embedding service.
-    
-    Args:
-        text: Text to embed
-        
-    Returns:
-        Numpy array of embeddings
-    """
-    # global _model # Remove global usage
-    
+    """Get embeddings for a SINGLE text string using the shared embedding service."""
     try:
-        # Get model from service
         model = get_embedding_model()
-        
-        # Generate embeddings
-        # Note: model.encode expects a list of sentences
         embeddings = model.encode([text], convert_to_numpy=True)[0]
         return embeddings
-        
     except Exception as e:
-        logger.error(f"Failed to generate embeddings using service: {str(e)}")
-        raise # Re-raise the exception
+        logger.error(f"Failed to generate single embedding using service: {str(e)}")
+        raise
 
 # Type definitions—4090's precision-tuned! 🔥
 class SearchMetadata(TypedDict):
@@ -107,47 +101,143 @@ def get_document(filename: str) -> str:
     
     return document
 
-def semantic_search(
-    query: str,
-    filename: Optional[str] = None,
-    limit: Optional[int] = None,
-    top_k: Optional[int] = None
-) -> List[Dict[str, Any]]:
-    """Searches Milvus with a query—4090's shredding! 🔥
+# --- Helper to build Milvus filter expression --- 
+def _build_milvus_filter_expression(filters: Optional[List[Dict[str, str]]]) -> Optional[str]:
+    """Builds a Milvus filter expression from frontend filter structure."""
+    if not filters:
+        return None
     
-    Args:
-        query: Search query
-        filename: Optional filename to filter results
-        limit: Maximum number of results (alias for top_k)
-        top_k: Maximum number of results (deprecated, use limit instead)
+    # Assuming filters is a list like: [{'type': 'filename', 'value': 'doc1.pdf'}, {'type': 'tag', 'value': 'urgent'}]
+    # We only support filename filters for now based on the chat_with_knowledge_core call
+    # Example: Convert [{'type': 'filename', 'value': 'doc1.pdf'}, {'type': 'filename', 'value': 'doc2.md'}] to "filename in ['doc1.pdf', 'doc2.md']"
+    
+    filename_filters = [f['value'] for f in filters if f.get('type') == 'filename' and f.get('value')]
+    
+    if not filename_filters:
+        return None
         
-    Returns:
-        List of matching chunks with metadata and scores
-    """
-    # Handle both limit and top_k parameters
-    result_limit = limit or top_k or CONFIG.search.default_limit
+    # Escape single quotes within filenames if necessary (though unlikely)
+    safe_filenames = [name.replace("'", "\'") for name in filename_filters]
     
-    # Get embeddings for query
-    query_embedding = get_embeddings(query)
+    # Format for Milvus 'in' operator
+    expression = f"filename in ['{'', ''.join(safe_filenames)}']"
+    logger.info(f"Constructed Milvus filter expression: {expression}")
+    return expression
+
+# --- Search Functions ---
+
+async def semantic_search(
+    query: str, 
+    user: User, # Add user object
+    limit: int = CONFIG.search.default_limit, 
+    min_score: float = CONFIG.search.min_score, 
+    filters: Optional[List[Dict[str, str]]] = None 
+) -> List[Dict[str, Any]]:
+    """Performs semantic search across relevant collections for the user."""
+    logger.info(f"Performing semantic search for user '{user.username}', query: '{query[:50]}...'")
     
-    # Prepare search parameters
-    search_params = {
-        "metric_type": "L2",
-        "params": {"nprobe": 10},
-    }
+    # Determine collections to search and ensure user collection exists
+    collections_to_search = []
+    user_collection_name = None # Initialize
     
-    # Add filename filter if provided
-    expr = f"{CONFIG.milvus.filename_field} == '{filename}'" if filename else None
+    if user.role == 'admin':
+        admin_collection_name = get_admin_collection_name()
+        if admin_collection_name: # Check if admin collection name is configured
+             collections_to_search.append(admin_collection_name)
+             # Ensure admin collection exists (might be redundant if lifespan works, but safe)
+             if not utility.has_collection(admin_collection_name):
+                 logger.warning(f"Admin collection '{admin_collection_name}' not found, attempting to create.")
+                 try:
+                    init_collection(admin_collection_name)
+                    logger.info(f"Dynamically created admin collection '{admin_collection_name}'.")
+                 except Exception as e_create:
+                    logger.error(f"Failed to dynamically create admin collection '{admin_collection_name}': {e_create}", exc_info=True)
+                    # Continue without admin collection if creation fails
+    else:
+        user_collection_name = get_user_collection_name(user.id)
+        if user_collection_name:
+            # ----> DYNAMICALLY CREATE USER COLLECTION IF IT DOES NOT EXIST <----
+            if not utility.has_collection(user_collection_name):
+                logger.warning(f"User collection '{user_collection_name}' for user {user.id} not found. Creating now.")
+                try:
+                    init_collection(user_collection_name) # Create it
+                    logger.info(f"Successfully created dynamic collection '{user_collection_name}' for user {user.id}.")
+                except Exception as e_create:
+                    logger.error(f"Failed to dynamically create collection '{user_collection_name}' for user {user.id}: {e_create}", exc_info=True)
+                    # Decide how to handle this: maybe raise error or return empty results?
+                    # For now, let's log and proceed without this collection.
+                    user_collection_name = None # Prevent searching a non-existent collection
+            
+            if user_collection_name: # Re-check if creation was successful
+                collections_to_search.append(user_collection_name)
+
+    # Always add global collection if configured
+    global_collection_name = get_global_collection_name()
+    if global_collection_name: # Check if global collection name is configured
+        collections_to_search.append(global_collection_name)
+        # Ensure global collection exists (might be redundant if lifespan works, but safe)
+        if not utility.has_collection(global_collection_name):
+            logger.warning(f"Global collection '{global_collection_name}' not found, attempting to create.")
+            try:
+                init_collection(global_collection_name)
+                logger.info(f"Dynamically created global collection '{global_collection_name}'.")
+            except Exception as e_create:
+                logger.error(f"Failed to dynamically create global collection '{global_collection_name}': {e_create}", exc_info=True)
+                # Continue without global collection if creation fails
+                if global_collection_name in collections_to_search:
+                     collections_to_search.remove(global_collection_name)
+
+    # Log the final list of collections we will actually search
+    logger.info(f"Final collections to search: {collections_to_search}")
     
-    # Execute search
-    results = search_collection(
-        query_vector=query_embedding,
-        limit=result_limit,
-        expr=expr,
-        search_params=search_params
-    )
+    # If no valid collections to search, return empty results
+    if not collections_to_search:
+        logger.warning("No valid Milvus collections found to search for this user.")
+        return []
+        
+    # Generate query embedding
+    try:
+        # Ensure get_embeddings is synchronous or awaited if it becomes async
+        # If get_embeddings uses a thread pool implicitly, this is okay.
+        # If it's truly async, use await asyncio.to_thread(get_embeddings, query)
+        query_vector = get_embeddings(query) 
+    except Exception as e:
+         logger.warning(f"Failed to generate query embedding: {e}", exc_info=True)
+         return []
     
-    return results
+    # Build filter expression from frontend filters (currently only supports filename)
+    filter_expression = _build_milvus_filter_expression(filters)
+    
+    try:
+        # Call the updated search_collection with the list of names
+        search_results = search_collection(
+            query_vector=query_vector, 
+            collection_names=collections_to_search,
+            limit=limit,               
+            expr=filter_expression     
+            # Pass search_params, output_fields if needed, defaults are in search_collection
+        )
+        
+        # Filter results by min_score (search_collection returns sorted results)
+        # Note: Score interpretation depends on metric (L2 lower is better, IP higher is better)
+        metric_type = CONFIG.milvus.search_params.get("metric_type", "L2").upper()
+        if metric_type == "IP":
+             final_results = [res for res in search_results if res.get("score", 0) >= min_score]
+        else: # Default to L2 or other distance metrics where lower is better
+             final_results = [res for res in search_results if res.get("score", float('inf')) <= min_score]
+        
+        logger.info(f"Semantic search completed. Found {len(final_results)} results meeting score threshold across {len(collections_to_search)} collections.")
+        # !!! PARANOID LOGGING !!!
+        logger.info(f"Type of final_results before returning: {type(final_results)}")
+        if final_results:
+            logger.info(f"Type of first item in final_results: {type(final_results[0])}")
+            logger.info(f"Content of first item: {final_results[0]}")
+        # !!! END PARANOID LOGGING !!!
+        return final_results
+        
+    except Exception as e:
+        logger.exception(f"Error during semantic search for user '{user.username}': {e}")
+        return []
 
 def keyword_search(
     query: str,

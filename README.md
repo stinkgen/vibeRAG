@@ -169,3 +169,36 @@ This rig is constantly evolving. Here's the upgrade manifest:
 ## Freedom Protocol (License) 📜
 
 MIT License. Go nuts. Build something cool.
+
+## Troubleshooting
+
+### GPU Not Detected / "Can't initialize NVML" Error in Backend Container
+
+If the `vibe-backend` container starts but fails to utilize the GPU (e.g., PyTorch reports `CUDA Available: False` or `nvidia-smi` fails with `Can't initialize NVML: Unknown Error` inside the container), even after confirming:
+
+*   Host NVIDIA drivers are installed and working (`nvidia-smi` runs on host).
+*   `nvidia-container-toolkit` is installed on the host.
+*   Docker daemon (`/etc/docker/daemon.json`) is configured for the NVIDIA runtime.
+*   `docker-compose.yml` correctly requests GPU resources (e.g., using the `deploy` key).
+
+The issue might be related to cgroup handling by the NVIDIA container runtime.
+
+**Solution:**
+
+1.  Edit the NVIDIA container runtime configuration file on the **host** machine:
+    ```bash
+    sudo nano /etc/nvidia-container-runtime/config.toml
+    ```
+2.  Find the line `no-cgroups = true` (it might be commented out or missing, the default is often `true`).
+3.  Change it or add it to be **`no-cgroups = false`**.
+4.  Save the file.
+5.  Restart the Docker daemon:
+    ```bash
+    sudo systemctl restart docker
+    ```
+6.  Recreate the backend container:
+    ```bash
+    docker compose up --force-recreate -d vibe-backend
+    ```
+
+This setting seems necessary on some host environments for NVML to initialize correctly within the container.

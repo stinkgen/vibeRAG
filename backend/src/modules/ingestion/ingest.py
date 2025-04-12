@@ -12,11 +12,19 @@ import spacy
 from langdetect import detect
 from unstructured.partition.auto import partition
 from unstructured.partition.pdf import partition_pdf
-from unstructured.documents.elements import Text, Title, ElementMetadata
+from unstructured.documents.elements import Text, Title, ElementMetadata, Element
 from transformers import GPT2TokenizerFast
 from src.modules.embedding.embed import embed_chunks
-from src.modules.vector_store.milvus_ops import store_with_metadata
+from src.modules.vector_store.milvus_ops import (
+    store_with_metadata, 
+    get_user_collection_name, 
+    get_admin_collection_name, 
+    get_global_collection_name,
+    init_collection # Ensure init_collection is imported for potential pre-checks
+)
 from src.modules.config.config import CONFIG  # Config's in the house! 🏠
+from src.modules.auth.database import User # Import User model
+from fastapi import HTTPException, UploadFile # Import UploadFile
 
 # Configure logging
 logging.basicConfig(
@@ -36,8 +44,9 @@ except OSError:
 tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
 
 # Constants
-DOCS_DIR = Path("storage/documents")
-DOCS_DIR.mkdir(parents=True, exist_ok=True)
+# REMOVED DOCS_DIR - Not needed if parsing directly from memory
+# DOCS_DIR = Path("storage/documents")
+# DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Type definitions—4090's precision-tuned! 🔥
 class ExtractedMetadata(TypedDict):
@@ -74,72 +83,127 @@ class UploadResponse(TypedDict):
     status: str
 
 def upload_document(
-    file: BinaryIO,
-    filename: str,
-    tags: List[str] = [],
-    metadata: Dict[str, str] = {}
-) -> UploadResponse:
-    """Upload and process a document with tags and metadata.
+    file: UploadFile, # Expect UploadFile directly from FastAPI
+    filename: str, 
+    user: User, 
+    target_collection_type: str = 'user',
+    tags: List[str] = None, 
+    metadata: Dict = None
+) -> Dict:
+    """Process and store a document in the appropriate Milvus collection.
     
     Args:
-        file: File-like object containing the document
-        filename: Name of the file
-        tags: Optional list of tags to associate with the document
-        metadata: Optional metadata dictionary
+        file: FastAPI UploadFile object
+        filename: Original filename
+        user: The authenticated user object.
+        target_collection_type: 'user' (default) or 'global'. Admins can target global.
+        tags: List of tags
+        metadata: Dictionary of metadata
         
     Returns:
-        Dictionary with document info and status
+        Dict: Status of the upload
     """
+    logger.info(f"Starting document upload process for {filename} by user {user.username} (ID: {user.id})")
+    
+    # Determine target collection name
+    collection_name: str
+    if user.role == 'admin':
+        if target_collection_type == 'global':
+            collection_name = get_global_collection_name()
+            logger.info(f"Admin {user.username} targeting GLOBAL collection: {collection_name}")
+        else:
+            collection_name = get_admin_collection_name()
+            logger.info(f"Admin {user.username} targeting personal collection: {collection_name}")
+    else:
+        # Regular users always target their own collection
+        collection_name = get_user_collection_name(user.id)
+        logger.info(f"User {user.username} targeting personal collection: {collection_name}")
+        # Ensure target_collection_type isn't misused by non-admins
+        if target_collection_type == 'global':
+             logger.warning(f"User {user.username} attempted to target global collection, overriding to personal.")
+             target_collection_type = 'user' # Force to user collection
+             
+    # Ensure the target collection exists before proceeding
     try:
-        # Create unique path and save file
-        doc_path = DOCS_DIR / filename
-        with open(doc_path, 'wb') as f:
-            shutil.copyfileobj(file, f)
-        
-        logger.info(f"Doc uploaded to {doc_path}—storage secured! 📁")
-        
-        # Add file info to metadata
-        file_metadata: ChunkMetadata = {
-            'filename': filename,
-            'file_type': doc_path.suffix.lower()[1:],  # Remove dot
-            'tags': tags
-        }
-        
-        # Parse document into chunks
-        try:
-            chunks = parse_document(doc_path, tags=tags)
-            logger.info(f"Doc parsed—{len(chunks)} chunks ready! 📝")
-            
-            # Add metadata to each chunk
-            for chunk in chunks:
-                chunk_metadata = cast(ChunkMetadata, chunk['metadata'])
-                chunk_metadata.update(file_metadata)
-            
-            # Embed chunks
-            embedded_chunks = embed_chunks(cast(List[Dict[str, Any]], chunks))
-            logger.info("Chunks embedded—vectors dropping! 🎯")
-            
-            # Store in Milvus with metadata
-            chunk_ids = store_with_metadata(embedded_chunks, tags, cast(Dict[str, str], metadata))
-            logger.info(f"Doc stored with {len(chunk_ids)} chunks—metadata locked! 🔒")
-            
-            return {
-                'filename': filename,
-                'num_chunks': len(chunks),
-                'tags': tags,
-                'metadata': metadata,
-                'status': 'success'
-            }
-            
-        except Exception as e:
-            # If parsing fails, clean up the uploaded file
-            doc_path.unlink(missing_ok=True)
-            logger.error(f"Processing failed for {filename}: {str(e)}")
-            raise Exception(f"Failed to process document: {str(e)}")
-            
+        init_collection(collection_name) 
     except Exception as e:
-        logger.error(f"Upload failed for {filename}: {str(e)}")
-        raise Exception(f"Upload failed: {str(e)}")
+        logger.error(f"Failed to initialize target collection '{collection_name}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Could not prepare storage for collection {collection_name}")
+
+    try:
+        # 1. Parse Document (Pass the UploadFile object directly)
+        logger.info(f"Parsing document: {filename}")
+        elements = parse_document(file, filename)
+        logger.info(f"Parsed {len(elements)} elements from {filename}")
+        
+        # Check if parsing returned any elements
+        if not elements:
+            logger.warning(f"Document {filename} parsing yielded no elements. Skipping ingestion.")
+            # Return a specific status or raise an error?
+            return {
+                "filename": filename,
+                "num_chunks": 0,
+                "tags": tags or [],
+                "metadata": metadata or {},
+                "status": f"Ingestion skipped: No content parsed from document."
+            }
+
+        # 2. Extract Metadata (Optional - Skip for now to simplify)
+        # extracted_meta = extract_metadata(" ".join(el.text for el in elements))
+        # combined_metadata = {**(metadata or {}), **extracted_meta}
+        combined_metadata = metadata or {}
+        combined_metadata['filename'] = filename # Ensure filename is in metadata
+        logger.info(f"Using combined metadata: {combined_metadata}")
+
+        # 3. Chunk Text (Using combined text from elements)
+        logger.info("Chunking text...")
+        # Combine text, handling potential None values if elements are empty
+        text_content = "\n\n".join([el.text for el in elements if hasattr(el, 'text') and el.text])
+        chunks_texts = chunk_text(text_content)
+        logger.info(f"Created {len(chunks_texts)} chunks.")
+
+        # Prepare chunks with metadata from elements if available
+        chunks_for_embedding = []
+        chunk_counter = 0
+        for text_chunk in chunks_texts:
+            chunk_meta = {
+                'filename': filename, 
+                'chunk_id': f"{filename}_chunk_{chunk_counter}" # Simple chunk ID
+            }
+            # Attempt to find corresponding element metadata (simplistic mapping)
+            # A better approach might involve mapping based on character offsets
+            # For now, just add the basic filename and chunk ID
+            chunks_for_embedding.append({'text': text_chunk, 'metadata': chunk_meta})
+            chunk_counter += 1
+
+        # 4. Embed Chunks
+        logger.info("Generating embeddings...")
+        embedded_chunks = embed_chunks(chunks_for_embedding)
+        logger.info(f"Generated embeddings for {len(embedded_chunks)} chunks.")
+
+        # 5. Store in Milvus
+        logger.info(f"Storing chunks in collection: {collection_name}")
+        store_with_metadata(
+            collection_name=collection_name, 
+            chunks=embedded_chunks, 
+            tags=tags, 
+            metadata=metadata or {}, # Pass the initial metadata provided in request
+            filename=filename 
+        )
+        logger.info(f"Successfully stored chunks for {filename} in {collection_name}.")
+
+        return {
+            "filename": filename,
+            "num_chunks": len(embedded_chunks),
+            "tags": tags or [],
+            "metadata": metadata or {},
+            "status": f"Successfully ingested into collection '{collection_name}'"
+        }
+
+    except Exception as e:
+        logger.exception(f"Error during document ingestion pipeline for {filename}: {e}")
+        # Attempt to cleanup uploaded file? Or rely on external cleanup?
+        raise HTTPException(status_code=500, detail=f"Error processing document {filename}: {str(e)}")
 
 def extract_metadata(text: str) -> ExtractedMetadata:
     """Extract metadata from text using spaCy and langdetect.
@@ -208,142 +272,64 @@ def chunk_text(text: str) -> List[str]:
     return chunks
 
 def parse_document(
-    file_path: Union[str, Path],
-    tags: List[str] = []
-) -> List[ChunkDict]:
-    """Parse a document and extract text with metadata.
+    # Changed first argument to accept UploadFile or BinaryIO
+    file: Union[UploadFile, BinaryIO], 
+    filename: str # Keep filename for metadata
+) -> List[Element]: # Return unstructured Elements
+    """Parse document content using unstructured, handling different file types.
     
     Args:
-        file_path: Path to the document to parse
-        tags: Optional list of tags to add to metadata
+        file: File-like object (UploadFile or BinaryIO)
+        filename: Original filename for context/metadata
         
     Returns:
-        List of dictionaries containing text chunks and associated metadata
+        List of unstructured Elements
     """
-    file_path = Path(file_path)
-    if not file_path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
-    
-    logger.info(f"Parsing document: {file_path}")
-    
-    try:
-        # Parse document based on type
-        if file_path.suffix.lower() == '.pdf':
-            # Use partition_pdf for PDFs to get page numbers
-            elements = partition_pdf(str(file_path))
-            result: List[ChunkDict] = []
-            
-            # First, group elements by page
-            pages: Dict[int, List[str]] = {}
-            current_page = 1
-            
-            for element in elements:
-                if not isinstance(element, (Text, Title)):
-                    continue
-                
-                # Try to get page number from metadata
-                try:
-                    if hasattr(element, 'metadata'):
-                        element_metadata = cast(ElementMetadata, element.metadata)
-                        if hasattr(element_metadata, 'page_number'):
-                            current_page = getattr(element_metadata, 'page_number', 1)
-                except Exception as e:
-                    logger.debug(f"Could not get page number from metadata: {str(e)}")
-                
-                # Initialize page text list if needed
-                if current_page not in pages:
-                    pages[current_page] = []
-                
-                # Add element text to page
-                text = str(element)
-                if text.strip():
-                    pages[current_page].append(text)
-            
-            # Now process each page
-            for page_num, page_texts in pages.items():
-                # Combine all text from the page
-                page_text = "\n".join(page_texts)
-                if not page_text.strip():
-                    continue
-                
-                # Extract metadata at the page level
-                extracted_metadata = extract_metadata(page_text)
-                base_metadata: BaseMetadata = {
-                    'filename': file_path.name,
-                    'file_type': file_path.suffix.lower()[1:]
-                }
-                
-                # Create chunk metadata with optional fields
-                chunk_metadata: ChunkMetadata = {
-                    **base_metadata,  # Include required base fields
-                    'title': file_path.stem,
-                    'page': page_num,
-                    'tags': tags,
-                    'language': extracted_metadata['language'],
-                    'entities': extracted_metadata['entities'],
-                    'keywords': extracted_metadata['keywords']
-                }
-                
-                # Chunk the page text
-                text_chunks = chunk_text(page_text)
-                
-                # Create chunk entries with page metadata
-                for chunk in text_chunks:
-                    if chunk.strip():  # Only add non-empty chunks
-                        result.append({
-                            'text': chunk,
-                            'metadata': chunk_metadata
-                        })
-            
-            return result
+    logger.info(f"Parsing file: {filename}")
+    file_content_type = None
+    file_object = None
 
-        else:
-            # Handle other file types
-            elements = partition(str(file_path))
-            text = "\n\n".join([str(element) for element in elements if str(element).strip()])
-            
-            if not text.strip():
-                raise ValueError("No text content found in document")
-            
-            # Extract rich metadata
-            extracted_metadata_other = extract_metadata(text)
-            
-            # Create base metadata for non-PDF
-            base_metadata_other: BaseMetadata = {
-                'filename': file_path.name,
-                'file_type': file_path.suffix.lower()[1:]
-            }
-            
-            # Create chunk metadata with optional fields for non-PDF
-            chunk_metadata_other: ChunkMetadata = {
-                **base_metadata_other,  # Include required base fields
-                'title': file_path.stem,
-                'page': 1,  # Non-PDF documents are treated as single page
-                'tags': tags,
-                'language': extracted_metadata_other['language'],
-                'entities': extracted_metadata_other['entities'],
-                'keywords': extracted_metadata_other['keywords']
-            }
-            
-            # Chunk text
-            chunks = chunk_text(text)
-            result = [{
-                'text': chunk,
-                'metadata': chunk_metadata_other
-            } for chunk in chunks if chunk.strip()]
-            
-            logger.info(f"Document chunked—{len(result)} pieces ready! 📄")
-        
-        if not result:
-            raise ValueError("No valid chunks extracted from document")
-            
-        if tags:
-            logger.info(f"Tagged {file_path.name} with {tags}—vibe sorted! 🏷️")
-        
-        return result
-    
+    # Handle UploadFile vs BinaryIO (e.g., from testing)
+    if hasattr(file, 'content_type') and callable(getattr(file, 'read')):
+        upload_file = cast(UploadFile, file)
+        file_content_type = upload_file.content_type
+        # Reset pointer and read into memory for unstructured
+        upload_file.file.seek(0) 
+        # Pass the internal file object to partition
+        file_object = upload_file.file 
+        logger.debug(f"Parsing UploadFile: {filename}, Content-Type: {file_content_type}")
+    elif hasattr(file, 'read'):
+        # Assuming BinaryIO or similar file-like object
+        file_object = cast(BinaryIO, file)
+        # Try to infer content type from filename extension
+        ext = Path(filename).suffix.lower()
+        if ext == '.pdf':
+            file_content_type = 'application/pdf'
+        elif ext == '.txt':
+            file_content_type = 'text/plain'
+        elif ext == '.md':
+            file_content_type = 'text/markdown'
+        # Add more types as needed
+        logger.debug(f"Parsing BinaryIO: {filename}, Inferred Type: {file_content_type}")
+    else:
+        raise ValueError("Unsupported file input type for parsing.")
+
+    try:
+        # Use unstructured.partition directly with the file object
+        # Pass filename for potential metadata, and content_type if known
+        elements = partition(
+            file=file_object, 
+            file_filename=filename, 
+            content_type=file_content_type,
+            # Add strategy="fast" for PDFs if desired, or handle PDF separately
+            # strategy="hi_res" for better PDF parsing if needed (requires extra deps)
+             pdf_infer_table_structure=True, # Example: enable table extraction
+             include_page_breaks=True # Keep page breaks
+        )
+        logger.info(f"Successfully parsed {len(elements)} elements from {filename}.")
+        return elements
     except Exception as e:
-        logger.error(f"Failed to parse document {file_path}: {str(e)}")
-        raise 
+        logger.error(f"Failed to parse document {filename} using unstructured: {e}", exc_info=True)
+        raise ValueError(f"Could not parse document: {e}")
 
 # Types locked—code's sharp as fuck! 🔥 
