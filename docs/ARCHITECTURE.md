@@ -4,7 +4,7 @@ This document details the architecture of the VibeRAG application, based on anal
 
 ## Component Breakdown
 
-VibeRAG comprises three primary services orchestrated by Docker Compose: the Frontend (including a Node.js proxy), the Backend (FastAPI application), and the Milvus Vector Database cluster.
+VibeRAG comprises four primary services orchestrated by Docker Compose: the Frontend (including a Node.js proxy), the Backend (FastAPI application), the PostgreSQL database (for user/auth/chat/session data), and the Milvus Vector Database cluster (for vectorized document storage).
 
 ```mermaid
 graph LR
@@ -12,6 +12,7 @@ graph LR
     FEProxy -- HTTP /api/v1/* --> Backend[Backend Container (FastAPI)];
     FEProxy -- WS /api/v1/ws/chat --> Backend;
     Backend -- TCP --> Milvus[(Milvus Cluster: standalone, etcd, minio)];
+    Backend -- TCP --> Postgres[(PostgreSQL DB: users, sessions, chat, auth)];
     Backend -- HTTP --> OpenAI[OpenAI API];
     Backend -- HTTP --> Ollama[Ollama API];
     Backend -- HTTP --> GoogleSearch[Google Custom Search API];
@@ -29,7 +30,7 @@ graph LR
     *   **Technology:** React, TypeScript.
     *   **Core Components:**
         *   `App.tsx`: Root component, manages overall layout (sidebar, main content) and navigation between feature views.
-        *   `Chat.tsx`: Implements the chat interface. Manages WebSocket connection state via `webSocketRef`, sends user queries and parameters, receives and renders streamed responses (text chunks, sources), handles chat history via `localStorage`, manages knowledge filters (`KnowledgeFilter.tsx`), and allows model selection (`ModelSelector.tsx`).
+        *   `Chat.tsx`: Implements the chat interface. Manages WebSocket connection state via `webSocketRef`, sends user queries and parameters, receives and renders streamed responses (text chunks, sources), handles chat history via persistent per-user sessions (PostgreSQL), manages knowledge filters (`KnowledgeFilter.tsx`), and allows model selection (`ModelSelector.tsx`). Requires JWT authentication for all chat/session APIs.
         *   `DocumentManager.tsx`: Provides UI for uploading files (PDF, TXT, MD), listing documents fetched from the `/list` endpoint, searching/sorting/filtering the list, deleting documents via the `/delete/{filename}` endpoint, and editing metadata via the `/documents/{filename}/metadata` endpoint.
         *   `PresentationViewer.tsx`: Allows users to input a prompt, optionally select a file context, choose model parameters (`ModelSelector.tsx`), and request presentation generation via the `/presentation` endpoint. Displays the resulting slides and sources. Includes `jspdf`-based PDF download functionality.
         *   `ResearchReport.tsx`: Allows users to input a query, toggle web search usage, and request a research report via the `/research` endpoint. Displays the structured report (title, summary, insights, analysis, sources).
@@ -39,6 +40,15 @@ graph LR
     *   **API Constants:** `src/config/api.ts` defines URLs for backend endpoints.
 
 **2. Backend Container (`vibe-backend`)**
+
+### Authentication & Multi-User Architecture
+
+*   **User Model & Auth:** All API endpoints (except login) require JWT authentication. User accounts (username, hashed password, role, active status) are stored in PostgreSQL. The backend creates a default admin user on first startup if none exist.
+*   **Role-Based Access Control:** Admin users can manage users via protected endpoints and the Admin Panel UI. Non-admins have access only to their own data.
+*   **Session & Chat History:** Chat sessions and messages are stored per-user in PostgreSQL. All queries are filtered by user ID to enforce isolation.
+*   **Per-User Data Isolation:** Each user has a private Milvus collection (`user_<user_id>`), with additional `admin` and `global` collections. File uploads and document management are routed to the correct collection and storage path based on the authenticated user.
+*   **Admin Panel:** The frontend includes an Admin Panel for user CRUD, password resets, and role management.
+*   **JWT Handling:** The frontend stores the JWT in localStorage and attaches it to all API requests via an Axios interceptor.
 
 *   **Technology:** Python, FastAPI, Uvicorn, Pydantic.
 *   **Runtime Process (`docker-compose.yml` command):** Runs the FastAPI application defined in `src.api.app:app` using `uvicorn` with `--reload` enabled.
@@ -90,18 +100,22 @@ graph LR
 
 ## Data Flow Summary
 
-*   **User Interaction:** Primarily occurs via the React UI, proxied through the Node.js server in the frontend container.
-*   **API Communication:** Standard HTTP request/response for most actions (upload, list, delete, config, generate presentation/research).
-*   **Chat Communication:** Uses WebSocket connection, proxied by Node.js, allowing bidirectional streaming between `Chat.tsx` and `backend/src/modules/generation/generate.py:chat_with_knowledge_ws`.
-*   **Knowledge Storage:** Documents are processed by the backend (`ingestion`), embeddings generated (`embedding`), and stored in Milvus (`vector_store`).
-*   **Knowledge Retrieval:** Queries trigger semantic search (`retrieval`/`vector_store`) against Milvus embeddings.
+*   **User Authentication:** Users must log in via the frontend login UI. Credentials are verified against PostgreSQL, and a JWT is issued on success.
+*   **User Interaction:** Occurs via the React UI, proxied through the Node.js server in the frontend container. All API and WebSocket requests require a valid JWT.
+*   **API Communication:** Standard HTTP request/response for most actions (upload, list, delete, config, generate presentation/research, user management, session management).
+*   **Chat Communication:** Uses WebSocket connection, proxied by Node.js, allowing bidirectional streaming between `Chat.tsx` and `backend/src/modules/generation/generate.py:chat_with_knowledge_ws`. Chat history is persisted per-user in PostgreSQL.
+*   **Knowledge Storage:** Documents are processed by the backend (`ingestion`), embeddings generated (`embedding`), and stored in per-user Milvus collections (`vector_store`). Files are stored in per-user directories on disk.
+*   **Knowledge Retrieval:** Queries trigger semantic search (`retrieval`/`vector_store`) against the user's private and global Milvus collections.
 *   **LLM Interaction:** Backend (`generation`) sends prompts (often including retrieved context) to external (OpenAI) or local (Ollama) LLM APIs.
 
 ## Key Design Points (Inferred from Code)
 
 *   **Single Backend Service:** Despite the `modules` structure, the backend functions as a single FastAPI service rather than separate microservices.
+*   **PostgreSQL as Core DB:** PostgreSQL is used for all user, authentication, role, and chat/session data. Milvus is used for vectorized document storage only.
+*   **RBAC & Security:** All sensitive endpoints are protected by FastAPI dependencies enforcing JWT auth and role checks. Admin-only endpoints are strictly enforced.
+*   **Per-User Data Isolation:** All document, chat, and session data is isolated per user. No cross-user access is possible at the API or DB level.
 *   **Reliance on Config:** Extensive use of `CONFIG` object (`config/config.py`) loaded from environment variables drives behavior (model names, limits, hosts, ports, field names, index types, etc.).
 *   **Embedding Model Singleton:** `embedding/service.py` ensures the SentenceTransformer model is loaded only once for efficiency.
 *   **JSON for Complex Data:** Milvus `metadata` field stores combined chunk/document metadata as a JSON string. Presentation and Research generation rely heavily on prompting the LLM to return specific JSON structures, which are then parsed.
 *   **Manual Proxying:** The Node.js server uses `axios` and `ws` directly for proxying, rather than standard proxy middleware libraries.
-*   **Milvus Metadata Update:** Updates involve a read-delete-insert pattern (`update_metadata_in_vector_store`) rather than an in-place update, which might have performance implications. 
+*   **Milvus Metadata Update:** Updates involve a read-delete-insert pattern (`update_metadata_in_vector_store`) rather than an in-place update, which might have performance implications.

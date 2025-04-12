@@ -39,4 +39,4 @@ VibeRAG utilizes a multi-container architecture orchestrated by Docker Compose:
 *   **API-Driven:** Communication between frontend and backend relies on defined API endpoints and WebSocket messages.
 *   **RAG Pipeline:** The central mechanism involves retrieving relevant document chunks (Retrieval) to provide context for LLM text generation (Augmented Generation).
 *   **Modularity (Backend):** Logic is organized into distinct Python modules within `backend/src/modules/` (e.g., `ingestion`, `embedding`, `retrieval`, `generation`, `vector_store`).
-*   **Client-Side State (Chat History):** The `Chat.tsx` component manages chat history persistence using the browser's `localStorage`. 
+*   **Chat History Persistence:** Chat history is persisted per-user in the PostgreSQL database via backend session/message APIs. The `Chat.tsx` component loads and manages chat sessions and messages for the authenticated user, ensuring multi-user isolation and server-side persistence.

@@ -69,7 +69,7 @@ Access the UI via `http://localhost:3000`. Navigation is via the sidebar.
     *   **Send:** Click the send button or press Enter.
     *   **Output:** Assistant responses stream into the chat pane. Responses using document context display numbered sources `[#]` below the message.
     *   **Sources:** Clicking a source number highlights the source information (filename, page number).
-    *   **History:** Toggle the history panel (clock icon). Select previous chats to load them. Start new chats (+). Delete chats (trash icon). History is saved in browser `localStorage`.
+    *   **History:** Toggle the history panel (clock icon). Select previous chats to load them. Start new chats (+). Delete chats (trash icon). Chat history is persisted per-user in the PostgreSQL database and loaded via the backend session/message APIs.
 
 **2. Documents (`📚 Documents`)**
 
@@ -117,4 +117,4 @@ Access the UI via `http://localhost:3000`. Navigation is via the sidebar.
 *   **Chat:** Uses WebSockets for real-time streaming responses.
 *   **Document Processing:** Upload triggers backend processing (parsing, chunking, embedding, storage in Milvus).
 *   **Generation Tasks:** Presentation and Research requests trigger backend workflows involving semantic search, LLM calls, and JSON parsing.
-*   **State Persistence:** Chat history and selected models persist across browser sessions via `localStorage`. Document data persists in Milvus volumes (unless `docker compose down -v` is used). 
+*   **State Persistence:** Chat history is persisted per-user in the PostgreSQL database and loaded via backend session/message APIs. UI preferences (like selected models) may persist in `localStorage`. Document data persists in Milvus volumes (unless `docker compose down -v` is used).

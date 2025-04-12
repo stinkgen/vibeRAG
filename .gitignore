@@ -266,3 +266,6 @@ volumes/
 whitepaper.pdf
 cleanup.sh
 .cursor/
+
+# Ignore .roo config
+.roo/

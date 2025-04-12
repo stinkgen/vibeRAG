@@ -7,7 +7,7 @@ This document provides a technical reference for VibeRAG, detailing backend API 
 *   **Location:** `backend/src/api/app.py`
 *   **Framework:** FastAPI
 *   **Base URL:** `/api/v1` (relative to backend service URL)
-*   **Authentication:** None.
+*   **Authentication:** JWT required for all endpoints except login. All API requests (except `/api/v1/auth/login`) must include a valid Bearer token. Role-based access control is enforced for admin/user management endpoints.
 *   **API Docs:** Auto-generated Swagger UI at `/docs`.
 
 ### Endpoints (Defined in `backend/src/api/app.py`)
@@ -111,7 +111,7 @@ Defined in `backend/src/api/app.py` for request/response validation.
 
 *   **`frontend/server.js`:** Crucial Node.js proxy layer. All FE-BE communication passes through it.
 *   **`frontend/src/config/api.ts`:** Defines endpoint paths used by `axios` calls.
-*   **State Management:** Primarily component-local state (`useState`, `useEffect`). Chat history uses `localStorage`.
+*   **State Management:** Primarily component-local state (`useState`, `useEffect`). Chat history is persisted per-user in the PostgreSQL database via backend session/message APIs, and loaded into the UI for the authenticated user.
 *   **Component Communication:** Mostly props-based. `ModelSelector` and `KnowledgeFilter` are reusable components.
 
-*(This reference is derived solely from the analyzed source code files.)* 
+*(This reference is derived solely from the analyzed source code files.)*
