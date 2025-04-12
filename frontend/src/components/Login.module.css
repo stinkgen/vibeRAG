@@ -1,30 +1,63 @@
 /* frontend/src/components/Login.module.css */
+@import url('../App.css'); /* Import global variables */
+
 .loginContainer {
     display: flex;
     justify-content: center;
     align-items: center;
     min-height: 100vh;
-    background-color: #1a1a1a; /* Dark background */
-    color: #e0e0e0; /* Light text */
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: var(--color-darker); /* Use VibeRAG darker bg */
+    color: var(--color-text); 
+    font-family: var(--font-body);
+    position: relative; /* For pseudo-elements */
+    overflow: hidden;
+}
+
+/* Add Grid Background */
+.loginContainer::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: 
+        linear-gradient(to right, rgba(0, 150, 255, 0.05) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(0, 150, 255, 0.05) 1px, transparent 1px);
+    background-size: 30px 30px;
+    opacity: 0.3;
+    z-index: 0;
+    pointer-events: none;
 }
 
 .loginBox {
-    background-color: #2a2a2a; /* Slightly lighter dark background */
+    background-color: rgba(0, 15, 30, 0.8); /* Darker, transparent panel */
     padding: 40px 50px;
     border-radius: 8px;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--border-color);
+    box-shadow: 0 5px 25px rgba(0, 0, 0, 0.5), 0 0 15px var(--color-blue-glow);
     text-align: center;
     width: 100%;
-    max-width: 400px;
+    max-width: 450px;
+    z-index: 1; /* Ensure box is above background */
+    position: relative;
+    animation: fadeIn 0.5s ease-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 .title {
-    color: #7e57c2; /* Vibe purple */
+    color: var(--color-blue-bright);
     margin-bottom: 30px;
-    font-size: 2.5rem;
-    font-weight: bold;
-    letter-spacing: 1px;
+    font-size: 2.2rem; /* Slightly adjusted */
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    font-family: var(--font-heading);
+    text-shadow: 0 0 10px var(--color-blue-glow);
 }
 
 .loginForm {
@@ -40,69 +73,86 @@
 .inputGroup label {
     display: block;
     margin-bottom: 8px;
-    color: #b0b0b0; /* Lighter grey for labels */
-    font-size: 0.9rem;
+    color: var(--text-secondary-color); /* Use theme secondary text */
+    font-size: 0.8rem;
     font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 .inputGroup input {
     width: 100%;
     padding: 12px 15px;
-    border: 1px solid #444; /* Darker border */
+    border: 1px solid var(--input-border-color); /* Use theme border */
     border-radius: 4px;
-    background-color: #333; /* Dark input background */
-    color: #e0e0e0; /* Light input text */
+    background-color: var(--input-bg-color); /* Use theme input bg */
+    color: var(--color-text); /* Use theme text */
     font-size: 1rem;
-    box-sizing: border-box; /* Include padding and border in the element's total width and height */
-    transition: border-color 0.3s ease;
+    box-sizing: border-box;
+    transition: all 0.2s ease;
+    font-family: var(--font-body);
 }
 
 .inputGroup input:focus {
     outline: none;
-    border-color: #7e57c2; /* Highlight focus with purple */
-    box-shadow: 0 0 5px rgba(126, 87, 194, 0.5);
+    border-color: var(--color-blue-primary); /* Use theme primary */
+    box-shadow: 0 0 8px var(--color-blue-glow);
 }
 
 .loginButton {
     padding: 12px 20px;
-    background-color: #7e57c2; /* Purple button */
+    background: linear-gradient(135deg, var(--color-blue-primary) 0%, var(--color-blue-dark) 100%); /* Gradient */
     color: white;
     border: none;
     border-radius: 4px;
     cursor: pointer;
     font-size: 1rem;
-    font-weight: bold;
-    transition: background-color 0.3s ease, box-shadow 0.3s ease;
+    font-weight: 600;
+    transition: all 0.2s ease;
     margin-top: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-family: var(--font-heading);
+    box-shadow: 0 0 15px rgba(0, 150, 255, 0.3);
 }
 
 .loginButton:hover:not(:disabled) {
-    background-color: #673ab7; /* Darker purple on hover */
-    box-shadow: 0 2px 8px rgba(126, 87, 194, 0.4);
+    background: linear-gradient(135deg, var(--color-blue-bright) 0%, var(--color-blue-primary) 100%);
+    box-shadow: 0 0 20px rgba(0, 150, 255, 0.6);
+    transform: translateY(-2px);
 }
 
 .loginButton:disabled {
-    background-color: #555;
+    background: var(--color-gray);
+    opacity: 0.7;
     cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
 }
 
 .errorMessage {
-    color: #ff6b6b; /* Red for errors */
+    color: var(--color-red);
     margin-top: -10px;
     margin-bottom: 15px;
     font-size: 0.9rem;
     text-align: center;
+    background: rgba(255, 50, 50, 0.1);
+    border: 1px solid rgba(255, 50, 50, 0.3);
+    padding: 0.5rem;
+    border-radius: 4px;
 }
 
 .defaultCredsInfo {
     margin-top: 25px;
     font-size: 0.85rem;
-    color: #aaa;
+    color: var(--text-secondary-color);
 }
 
 .defaultCredsInfo code {
-    background-color: #444;
-    padding: 2px 5px;
+    background-color: rgba(0, 30, 60, 0.7); /* Use theme dark bg */
+    padding: 3px 6px;
     border-radius: 3px;
-    color: #ddd;
+    color: var(--color-blue-bright);
+    font-family: var(--font-mono);
+    border: 1px solid var(--input-border-color);
 } 

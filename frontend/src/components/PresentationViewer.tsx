@@ -165,13 +165,53 @@ const PresentationViewer: React.FC<PresentationViewerProps> = ({ isAuthReady }) 
 
     const handleSourceClick = async (source: string) => {
         const pdfFilename = source;
+        setError(null); // Clear previous errors
+        // Add temporary loading state for download?
+        // setDownloadingSource(pdfFilename); 
         try {
             const pdfUrl = API_ENDPOINTS.GET_DOCUMENT(pdfFilename);
-            console.log("Attempting to open PDF source:", pdfUrl);
-            window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+            console.log("Attempting to fetch PDF source via axios:", pdfUrl);
+
+            // Use axios to fetch the PDF as a blob, includes auth token via interceptor
+            const response = await axios.get(pdfUrl, {
+                responseType: 'blob', // Important: response type is blob
+            });
+
+            // Create a Blob from the PDF Stream
+            const file = new Blob(
+                [response.data],
+                { type: 'application/pdf' }
+            );
+
+            // Build a URL from the file
+            const fileURL = URL.createObjectURL(file);
+            
+            // Create a temporary link element
+            const link = document.createElement('a');
+            link.href = fileURL;
+            link.setAttribute('download', pdfFilename); // Set download attribute
+            document.body.appendChild(link);
+            
+            // Trigger download
+            link.click();
+            
+            // Clean up and remove the link and revoke the URL
+            link.parentNode?.removeChild(link);
+            URL.revokeObjectURL(fileURL);
+
+            console.log("PDF download initiated for:", pdfFilename);
+
         } catch (error: any) {
-            console.error('Failed to open PDF source:', error);
-            setError(error.response?.data?.detail || error.message || 'Could not open PDF source.');
+            console.error('Failed to download PDF source:', error);
+            if (axios.isAxiosError(error) && error.response?.status === 401) {
+                 setError(`Unauthorized: Cannot download ${pdfFilename}. Ensure you are logged in.`);
+            } else if (axios.isAxiosError(error) && error.response?.status === 404) {
+                 setError(`Error: Source file ${pdfFilename} not found on server.`);
+            } else {
+                 setError(error.response?.data?.detail || error.message || `Could not download ${pdfFilename}.`);
+            }
+        } finally {
+            // setDownloadingSource(null);
         }
     };
 

@@ -33,3 +33,25 @@ bcrypt
 PyJWT
 SQLAlchemy
 Alembic # For database migrations (optional but good practice)
+
+# Add Milvus client
+milvus==2.3.3
+
+# Add Postgres driver
+psycopg[binary]
+
+# Add others as needed
+requests
+
+# For PDF parsing
+pypdf
+
+# REMOVED jsPDF - it's a frontend library
+# For generating slides/PDF
+# jsPDF
+
+# For Langchain Search Integration (if used, ensure versions match)
+# langchain==...
+# langchain_community==...
+# langchain_openai==...
+# langchain_milvus==...

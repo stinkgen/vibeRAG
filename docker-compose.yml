@@ -65,6 +65,26 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  db:
+    container_name: vibe-db
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-viberag}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - vibe-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-user} -d $${POSTGRES_DB:-viberag}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   backend:
     container_name: vibe-backend
     build:
@@ -76,29 +96,28 @@ services:
       - BACKEND_PORT=${BACKEND_PORT:-8000}
       - MILVUS_HOST=standalone
       - MILVUS_PORT=${MILVUS_API_PORT:-19530}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@db:${POSTGRES_INTERNAL_PORT:-5432}/${POSTGRES_DB:-viberag}
     ports:
       - "8000:8000"
     volumes:
       - ./backend/src:/app/src
       - ./backend/models:/app/models
-      - ./backend/data:/app/data
     depends_on:
       standalone:
          condition: service_healthy
+      db:
+         condition: service_healthy
     networks:
       - vibe-network
-    # Add extra_hosts for Linux Docker to resolve host.docker.internal
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # --- Add GPU Request using deploy key ---
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: 1 # Or 'all' to request all GPUs
+              count: 1
               capabilities: [gpu, compute, utility]
-    # ---------------------------------------
     command: ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   frontend:
@@ -111,10 +130,14 @@ services:
     depends_on:
       backend:
         condition: service_started
-      standalone:
-        condition: service_healthy
     networks:
       - vibe-network
+
+volumes:
+  postgres_data: {}
+  etcd:
+  minio:
+  milvus:
 
 networks:
   vibe-network:
