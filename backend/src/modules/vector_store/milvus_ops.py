@@ -7,10 +7,11 @@ making your embeddings searchable faster than you can say 'semantic similarity'.
 import json
 import logging
 import os
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Callable
 import time
 import uuid
 import numpy as np
+import asyncio
 
 from pymilvus import (
     connections,
@@ -115,29 +116,66 @@ def get_collection_schema() -> CollectionSchema:
     ]
     return CollectionSchema(fields=fields, description="Document Chunks Collection")
 
-def create_collection_index(collection: Collection):
-    """Creates the HNSW index on the embedding field."""
+async def create_collection_index(collection: Collection, field_name: str):
+    """Creates the HNSW index on the specified vector field."""
     try:
-        if not collection.has_index():
-            logger.info(f"Creating index for collection '{collection.name}'...")
+        # Check existing indexes more robustly
+        has_target_index = False
+        if collection.has_index():
+            for index in collection.indexes:
+                if index.field_name == field_name:
+                    has_target_index = True
+                    found_index = index # Store the found index object
+                    break
+                    
+        if not has_target_index:
+            logger.info(f"Creating index on field '{field_name}' for collection '{collection.name}'...")
+            # Use generic index params from config for now
             index_params = {
                 "index_type": CONFIG.milvus.index_params["index_type"],
                 "metric_type": CONFIG.milvus.index_params["metric_type"],
                 "params": CONFIG.milvus.index_params["params"]
             }
-            collection.create_index(CONFIG.milvus.embedding_field, index_params)
-            logger.info(f"Created index on field '{CONFIG.milvus.embedding_field}' for collection '{collection.name}'.")
+            collection.create_index(field_name, index_params)
+            # Wait for index creation (need to get the actual index name created)
+            # This might take a moment for the index list to update after creation
+            created_index_name = None
+            for _ in range(5): # Try a few times
+                 await asyncio.sleep(0.5) # Short delay
+                 try:
+                      indexes_after_create = collection.indexes
+                      for idx in indexes_after_create:
+                          if idx.field_name == field_name:
+                               created_index_name = idx.index_name
+                               break
+                      if created_index_name:
+                           break
+                 except Exception as e:
+                      logger.warning(f"Error fetching indexes after creation, retrying: {e}")
+            
+            if created_index_name:
+                 logger.info(f"Index '{created_index_name}' created for field '{field_name}'. Waiting for build completion...")
+                 utility.wait_for_index_building_complete(collection.name, index_name=created_index_name)
+                 logger.info(f"Finished building index '{created_index_name}' on field '{field_name}' for collection '{collection.name}'.")
+            else:
+                 logger.error(f"Failed to find index name for field '{field_name}' after creation attempt.")
         else:
-            logger.info(f"Index already exists for collection '{collection.name}'.")
+            logger.info(f"Index '{found_index.index_name}' on field '{field_name}' already exists for collection '{collection.name}'.")
     except Exception as e:
-        logger.error(f"Failed to create or check index for collection '{collection.name}': {e}", exc_info=True)
-        # Decide if this should raise an error
+        logger.error(f"Failed to create or check index for collection '{collection.name}', field '{field_name}': {e}", exc_info=True)
 
-def init_collection(collection_name: str, recreate: bool = False) -> Collection:
-    """Initialize or load a specific Milvus collection.
+async def init_collection(
+    collection_name: str, 
+    schema_func: Callable[[], CollectionSchema], 
+    embedding_field_name: str,
+    recreate: bool = False
+) -> Collection:
+    """Initialize or load a specific Milvus collection using a provided schema function.
 
     Args:
         collection_name: The name of the collection to initialize/load.
+        schema_func: A function that returns the CollectionSchema.
+        embedding_field_name: The name of the field containing the vector embeddings.
         recreate: If True, drop existing collection and create new one.
 
     Returns:
@@ -147,32 +185,29 @@ def init_collection(collection_name: str, recreate: bool = False) -> Collection:
     
     collection_exists = utility.has_collection(collection_name)
 
+    if collection_exists and recreate:
+        logger.warning(f"Dropping existing collection: {collection_name}")
+        utility.drop_collection(collection_name)
+        collection_exists = False # Reset flag
+            
     if collection_exists:
-        if recreate:
-            logger.warning(f"Dropping existing collection: {collection_name}")
-            utility.drop_collection(collection_name)
-            collection_exists = False # Reset flag as it's dropped
-        else:
-            logger.info(f"Collection '{collection_name}' already exists, loading it.")
-            collection = Collection(collection_name)
-            create_collection_index(collection) # Ensure index exists
-            collection.load() # Load into memory
-            logger.info(f"Collection '{collection_name}' loaded.")
-            return collection
-
-    # If collection doesn't exist or was dropped
-    if not collection_exists:
-        logger.info(f"Creating new collection: '{collection_name}'")
-        schema = get_collection_schema()
-        collection = Collection(name=collection_name, schema=schema, consistency_level=CONFIG.milvus.consistency_level)
-        logger.info(f"Collection '{collection_name}' created.")
-        create_collection_index(collection) # Create index
+        logger.info(f"Collection '{collection_name}' already exists, loading it.")
+        collection = Collection(collection_name)
+        await create_collection_index(collection, embedding_field_name) # Ensure index exists
+        logger.info(f"Loading collection '{collection_name}' into memory...")
         collection.load() # Load into memory
         logger.info(f"Collection '{collection_name}' loaded.")
         return collection
-
-    # This part should ideally not be reached, but return collection if it exists somehow
-    return Collection(collection_name)
+    else: # Collection doesn't exist or was dropped
+        logger.info(f"Creating new collection: '{collection_name}'")
+        schema = schema_func() # Get schema from the provided function
+        collection = Collection(name=collection_name, schema=schema, consistency_level=CONFIG.milvus.consistency_level)
+        logger.info(f"Collection '{collection_name}' created. Creating index...")
+        await create_collection_index(collection, embedding_field_name) # Create index
+        logger.info(f"Loading collection '{collection_name}' into memory...")
+        collection.load() # Load into memory
+        logger.info(f"Collection '{collection_name}' loaded.")
+        return collection
 
 # --- Add Collection Management Functions ---
 
@@ -215,7 +250,7 @@ def get_global_collection_name() -> str:
 
 # --- Modify existing functions to use collection_name ---
 
-def store_with_metadata(collection_name: str, chunks: List[Dict], tags: List[str] = None, metadata: Dict = None, filename: str = None) -> List[str]:
+async def store_with_metadata(collection_name: str, chunks: List[Dict], tags: List[str] = None, metadata: Dict = None, filename: str = None) -> List[str]:
     """Store chunks with metadata in a specific Milvus collection.
     
     Args:
@@ -228,7 +263,7 @@ def store_with_metadata(collection_name: str, chunks: List[Dict], tags: List[str
     Returns:
         List of document IDs for the stored chunks
     """
-    collection = init_collection(collection_name) # Get the specific collection
+    collection = await init_collection(collection_name, get_collection_schema, CONFIG.milvus.embedding_field, False) # Get the specific collection
     
     # Generate a unique doc_id for this batch within this collection context
     doc_id = str(uuid.uuid4())
@@ -289,10 +324,10 @@ def store_with_metadata(collection_name: str, chunks: List[Dict], tags: List[str
     
     return [doc_id] * len(chunks) # Return the single doc_id used for this batch
 
-def delete_document(collection_name: str, filename: str) -> bool:
+async def delete_document(collection_name: str, filename: str) -> bool:
     """Delete document chunks associated with a filename from a specific collection."""
     try:
-        collection = init_collection(collection_name) # Ensure collection exists and is loaded
+        collection = await init_collection(collection_name, get_collection_schema, CONFIG.milvus.embedding_field, False) # Ensure collection exists and is loaded
         
         expr = f"{CONFIG.milvus.filename_field} == \"{filename}\""
         logger.info(f"Attempting deletion from '{collection_name}' with expression: {expr}")
@@ -315,7 +350,7 @@ def delete_document(collection_name: str, filename: str) -> bool:
         logger.error(f"Error deleting document {filename} from {collection_name}: {str(e)}", exc_info=True)
         return False
 
-def update_metadata_in_vector_store(
+async def update_metadata_in_vector_store(
     collection_name: str,
     filename: str, 
     tags: Optional[List[str]] = None, 
@@ -339,7 +374,7 @@ def update_metadata_in_vector_store(
         logger.warning("Update called with no changes specified for tags or metadata.")
         return True # No changes needed
 
-    collection = init_collection(collection_name) # Use the specified collection
+    collection = await init_collection(collection_name, get_collection_schema, CONFIG.milvus.embedding_field, False) # Use the specified collection
     
     # 1. Query for all existing chunks matching the filename
     query_expr = f"{CONFIG.milvus.filename_field} == \"{filename}\""
@@ -438,13 +473,13 @@ def update_metadata_in_vector_store(
         logger.exception(f"Error updating metadata in collection '{collection_name}' for document '{filename}': {str(e)}")
         return False
 
-def search_by_tags(
+async def search_by_tags(
     collection_name: str,
     tags: List[str],
     limit: int = 10
 ) -> List[Dict[str, Any]]:
     """Search for chunks by tags in a specific collection."""
-    collection = init_collection(collection_name) # Use specific collection
+    collection = await init_collection(collection_name, get_collection_schema, CONFIG.milvus.embedding_field, False) # Use specific collection
     # collection.load() # init_collection ensures load
     
     # Build tag search expression using array_contains
@@ -496,14 +531,14 @@ def search_by_tags(
     logger.info(f"Found {len(chunks)} chunks in '{collection_name}' with tags {tags}")
     return chunks
 
-def search_by_metadata(
+async def search_by_metadata(
     collection_name: str,
     key: str,
     value: str,
     limit: int = 10
 ) -> List[Dict[str, Any]]:
     """Search for chunks by metadata field in a specific collection."""
-    collection = init_collection(collection_name) # Use specific collection
+    collection = await init_collection(collection_name, get_collection_schema, CONFIG.milvus.embedding_field, False) # Use specific collection
     # collection.load() # init_collection ensures load
     
     # Search in metadata JSON using JSON field access
@@ -555,7 +590,7 @@ def search_by_metadata(
     logger.info(f"Found {len(chunks)} chunks in '{collection_name}' with {key}={value}")
     return chunks
 
-def search_collection(
+async def search_collection(
     query_vector: List[float],
     collection_names: List[str],
     expr: str = None,
@@ -609,7 +644,7 @@ def search_collection(
         
         for collection_name in collection_names:
             try:
-                collection = init_collection(collection_name) # Ensure exists and load
+                collection = await init_collection(collection_name, get_collection_schema, CONFIG.milvus.embedding_field, False) # Ensure exists and load
                 logger.info(f"Searching collection: {collection_name}")
                 
                 search_kwargs = {
@@ -691,3 +726,211 @@ async def disconnect_milvus():
     except Exception as e:
         logger.error(f"Failed to disconnect from Milvus: {str(e)}")
         # Don't raise here, just log
+
+# --- RAG Document Schema --- 
+def get_rag_document_schema() -> CollectionSchema:
+    """Creates the collection schema for RAG documents based on config."""
+    fields = [
+        FieldSchema(name=CONFIG.milvus.chunk_id_field, dtype=DataType.INT64, is_primary=True, auto_id=True),
+        FieldSchema(name=CONFIG.milvus.doc_id_field, dtype=DataType.VARCHAR, max_length=CONFIG.milvus.field_params[CONFIG.milvus.doc_id_field]['max_length']),
+        FieldSchema(name=CONFIG.milvus.embedding_field, dtype=DataType.FLOAT_VECTOR, dim=CONFIG.milvus.embedding_dim),
+        FieldSchema(name=CONFIG.milvus.text_field, dtype=DataType.VARCHAR, max_length=CONFIG.milvus.field_params[CONFIG.milvus.text_field]['max_length']),
+        FieldSchema(name=CONFIG.milvus.metadata_field, dtype=DataType.JSON),
+        FieldSchema(name=CONFIG.milvus.tags_field, dtype=DataType.ARRAY, element_type=DataType.VARCHAR, max_capacity=CONFIG.milvus.field_params[CONFIG.milvus.tags_field]['max_capacity'], max_length=CONFIG.milvus.field_params[CONFIG.milvus.tags_field]['max_length']),
+        FieldSchema(name=CONFIG.milvus.filename_field, dtype=DataType.VARCHAR, max_length=CONFIG.milvus.field_params[CONFIG.milvus.filename_field]['max_length']),
+        *([] if 'category' not in CONFIG.milvus.field_params else [
+            FieldSchema(name='category', dtype=DataType.VARCHAR, max_length=CONFIG.milvus.field_params['category']['max_length'])
+        ])
+    ]
+    return CollectionSchema(fields=fields, description="RAG Document Chunks Collection")
+
+# --- Agent Memory Collection Schema ---
+# --- Agent Memory Collection Naming ---
+def get_agent_memory_collection_name(agent_id: int) -> str:
+    """Returns the specific Milvus collection name for a given agent ID."""
+    # Basic validation, adjust prefix/suffix as needed
+    if not isinstance(agent_id, int) or agent_id <= 0:
+        raise ValueError("agent_id must be a positive integer.")
+    return f"agent_memory_{agent_id}"
+
+def get_agent_memory_schema() -> CollectionSchema:
+    """Returns the schema for the agent memories collection."""
+    # Define fields required for agent memory
+    fields = [
+        FieldSchema(name="memory_pk", dtype=DataType.INT64, is_primary=True, auto_id=True), # Milvus primary key
+        FieldSchema(name="postgres_id", dtype=DataType.INT64, description="Primary key from Postgres agent_memories table"), # Link to Postgres
+        FieldSchema(name="agent_id", dtype=DataType.INT64, description="Agent owning the memory"),
+        FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=CONFIG.embedding.embedding_dim), # Use EmbeddingConfig dim
+        FieldSchema(name="memory_type", dtype=DataType.VARCHAR, max_length=64, description="Type of memory (e.g., thought, action)"),
+        FieldSchema(name="importance", dtype=DataType.FLOAT, description="Importance score (0-1)")
+        # Add timestamp? Could be useful for time-based filtering/decay in Milvus
+        # FieldSchema(name="timestamp", dtype=DataType.INT64, description="UTC Timestamp as int") 
+    ]
+    # Consider adding index on agent_id for faster filtering?
+    return CollectionSchema(fields=fields, description="Agent Memories Collection")
+
+# Specific init function for agent memory collection
+async def init_agent_memory_collection(agent_id: int, recreate: bool = False) -> Collection:
+    """Initializes the agent memory collection using its specific schema."""
+    collection_name = get_agent_memory_collection_name(agent_id)
+    schema_func = get_agent_memory_schema
+    embedding_field_name = "embedding" # Hardcoded based on schema definition
+    logger.info(f"Initializing Milvus collection for Agent ID {agent_id}: {collection_name}")
+    return await init_collection(collection_name, schema_func, embedding_field_name, recreate)
+
+# Specific init function for RAG document collection
+async def init_rag_collection(recreate: bool = False) -> Collection:
+    """Initializes the RAG document collection using its specific schema."""
+    collection_name = CONFIG.milvus.collection_name
+    schema_func = get_rag_document_schema
+    embedding_field_name = CONFIG.milvus.embedding_field # From config
+    logger.info(f"Initializing Milvus RAG collection: {collection_name}")
+    return await init_collection(collection_name, schema_func, embedding_field_name, recreate)
+
+
+# --- Insertion Functions --- 
+
+# Adapt store_with_metadata or create new insert for agent memories
+async def insert_agent_memories(
+    agent_id: int, # Add agent_id to determine collection
+    memories: List[Dict[str, Any]] # Expect dicts with postgres_id, agent_id, embedding, etc.
+) -> List[int]:
+    """Inserts agent memories into the dedicated Milvus collection.
+    
+    Args:
+        agent_id: The ID of the agent whose memories to insert.
+        memories: List of dictionaries, each matching the agent memory schema fields 
+                  (excluding memory_pk which is auto-generated).
+                  Example: {'postgres_id': 123, 'agent_id': 1, 'embedding': [...], 'memory_type': 'thought', 'importance': 0.7}
+
+    Returns:
+        List of Milvus primary keys (memory_pk) for the inserted entities.
+    """
+    collection_name = get_agent_memory_collection_name(agent_id)
+    collection = await init_agent_memory_collection(agent_id=agent_id) # Ensure specific collection exists and is loaded
+    
+    if not memories:
+        return []
+        
+    # Prepare data lists based on schema order
+    # Schema: memory_pk(auto), postgres_id, agent_id, embedding, memory_type, importance
+    postgres_ids = [m['postgres_id'] for m in memories]
+    agent_ids = [m['agent_id'] for m in memories]
+    embeddings = [m['embedding'] for m in memories]
+    memory_types = [m['memory_type'] for m in memories]
+    importances = [m['importance'] for m in memories]
+    
+    insert_data = [
+        postgres_ids,
+        agent_ids,
+        embeddings,
+        memory_types,
+        importances
+    ]
+    
+    try:
+        logger.info(f"Inserting {len(memories)} agent memories into Milvus collection '{collection_name}'.")
+        mutation_result = collection.insert(insert_data)
+        collection.flush() # Ensure data is written
+        logger.info(f"Agent memories inserted and flushed. PKs: {mutation_result.primary_keys[:10]}...")
+        return mutation_result.primary_keys
+    except Exception as e:
+        logger.error(f"Failed to insert agent memories into Milvus collection '{collection_name}': {e}", exc_info=True)
+        return []
+
+# Existing store_with_metadata for RAG documents (might need slight adjustments if schema changed)
+# ... (store_with_metadata definition) ...
+
+# --- Search Functions --- 
+
+async def search_agent_memories(
+    agent_id: int,
+    query_vector: List[float],
+    limit: int = 10,
+    min_importance: Optional[float] = None
+) -> List[Dict[str, Any]]:
+    """Searches agent memories in Milvus for a specific agent.
+
+    Args:
+        agent_id: The ID of the agent whose memories to search.
+        query_vector: The query embedding vector.
+        limit: Maximum number of results.
+        min_importance: Optional minimum importance score to filter by.
+
+    Returns:
+        List of dictionaries containing 'postgres_id' and 'score' (distance).
+    """
+    collection_name = get_agent_memory_collection_name(agent_id)
+    collection = await init_agent_memory_collection(agent_id=agent_id) # Ensure specific collection exists and is loaded
+    
+    search_params = CONFIG.milvus.search_params
+    # Use L2 distance, lower is better
+    metric_type = CONFIG.milvus.index_params.get("metric_type", "L2")
+    
+    # Build filter expression
+    expr = f"agent_id == {agent_id}"
+    if min_importance is not None:
+        expr += f" and importance >= {min_importance}"
+        
+    try:
+        logger.info(f"Searching agent memories for agent {agent_id} in '{collection_name}'...")
+        results = collection.search(
+            data=[query_vector],
+            anns_field="embedding",
+            param=search_params,
+            limit=limit,
+            expr=expr,
+            output_fields=["postgres_id", "importance"] # Fetch postgres_id and maybe importance
+        )
+        
+        # Process results
+        processed_results = []
+        if results and results[0]:
+            for hit in results[0]:
+                processed_results.append({
+                    "postgres_id": hit.entity.get("postgres_id"),
+                    "score": hit.distance, # Lower distance is better for L2
+                    "importance": hit.entity.get("importance") # Include importance if needed
+                })
+        
+        logger.info(f"Found {len(processed_results)} relevant memories for agent {agent_id}.")
+        # Results are already sorted by distance by Milvus
+        return processed_results
+        
+    except Exception as e:
+        logger.error(f"Failed to search agent memories for agent {agent_id}: {e}", exc_info=True)
+        return []
+
+# Existing search_collection for RAG (might need refactoring if multi-collection logic is complex)
+# ... (search_collection definition) ...
+
+# --- Deletion Functions --- 
+
+async def delete_agent_memory_by_postgres_id(
+    agent_id: int, # Add agent_id to determine collection
+    postgres_ids: List[int]
+) -> bool:
+    """Deletes agent memories from Milvus based on their Postgres IDs."""
+    if not postgres_ids:
+        return True
+    collection_name = get_agent_memory_collection_name(agent_id)
+    ensure_connection()
+    collection = await init_agent_memory_collection(agent_id=agent_id) # Ensure specific collection exists and is loaded
+    
+    expr = f"postgres_id in {postgres_ids}"
+    try:
+        logger.warning(f"Attempting to delete {len(postgres_ids)} agent memories from Milvus '{collection_name}' with Postgres IDs: {postgres_ids[:10]}...")
+        delete_result = collection.delete(expr=expr)
+        collection.flush()
+        deleted_count = getattr(delete_result, 'delete_count', len(getattr(delete_result, 'primary_keys', [])))
+        logger.info(f"Milvus deletion result for agent memories (Postgres IDs: {postgres_ids[:10]}...): {deleted_count} deleted.")
+        # We might not know expected count easily if some IDs didn't exist in Milvus
+        return True # Indicate attempt was made
+    except Exception as e:
+        logger.error(f"Failed to delete agent memories from Milvus by Postgres IDs: {e}", exc_info=True)
+        return False
+
+# Existing delete_document for RAG
+# ... (delete_document definition) ...
+
+# ... rest of file (disconnect, etc.) ...

@@ -7,6 +7,7 @@ import ResearchReport from './components/ResearchReport';
 import Config from './components/Config';
 import Login from './components/Login'; // Import Login component
 import AdminPanel from './components/AdminPanel'; // Import AdminPanel
+import MyAgentsPage from './pages/MyAgentsPage'; // Import the new page component
 import styles from './App.module.css';
 import './styles/global.css';
 
@@ -126,8 +127,13 @@ const AdminIcon = () => (
     <span className={styles.navButtonIcon}>🛡️</span> // Example icon
 );
 
+// Add My Agents Icon
+const MyAgentsIcon = () => (
+    <span className={styles.navButtonIcon}>🤖</span> // Example robot icon
+);
+
 function App() {
-    const [activeTab, setActiveTab] = useState<'chat' | 'docs' | 'presentation' | 'research' | 'config' | 'admin'>('chat');
+    const [activeTab, setActiveTab] = useState<'chat' | 'docs' | 'presentation' | 'research' | 'config' | 'admin' | 'myAgents'>('chat');
     const [authToken, setAuthToken] = useState<string | null>(localStorage.getItem('vibeRAG_authToken')); // Read initial directly
     const [isAdmin, setIsAdmin] = useState<boolean>(false);
     const [currentUserId, setCurrentUserId] = useState<number | null>(null);
@@ -245,6 +251,15 @@ function App() {
                         Config
                     </button>
                     
+                    {/* Add My Agents Button (Visible to all logged-in users) */}
+                    <button
+                        className={`${styles.navButton} ${activeTab === 'myAgents' ? styles.active : ''}`}
+                        onClick={() => setActiveTab('myAgents')}
+                    >
+                        <MyAgentsIcon />
+                        My Agents
+                    </button>
+
                     {/* Conditional Admin Button */}
                     {isAdmin && (
                         <button
@@ -277,6 +292,7 @@ function App() {
                 {activeTab === 'presentation' && <PresentationViewer isAuthReady={isAuthReady} />}
                 {activeTab === 'research' && <ResearchReport isAuthReady={isAuthReady} />}
                 {activeTab === 'config' && <Config />}
+                {activeTab === 'myAgents' && <MyAgentsPage userId={currentUserId} />}
                 {activeTab === 'admin' && isAdmin && currentUserId && <AdminPanel currentUserId={currentUserId} />}
                 {activeTab === 'admin' && (!isAdmin || !currentUserId) && <p>Access Denied.</p>} 
             </main>

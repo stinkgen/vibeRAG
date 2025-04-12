@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from datetime import timedelta
 from enum import Enum
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Query, APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Query, APIRouter, WebSocket, WebSocketDisconnect, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field, constr
@@ -40,8 +40,12 @@ chat_histories_store: Dict[str, List[Dict[str, str]]] = {}
 
 # from frontend.backend.services.chat_service import ChatService, RAGError, SearchError, GenerationError # Commented out - remove later
 from src.modules.generation.slides import create_presentation # Fixed import
-from src.modules.research.research import create_research_report # Fixed import
-from src.modules.vector_store.milvus_ops import connect_milvus, init_collection, delete_document, ensure_connection, update_metadata_in_vector_store, get_user_collection_name, get_admin_collection_name, get_global_collection_name, list_all_collections, drop_collection # Fixed import
+from src.modules.research.research import create_research_report # Corrected path
+from src.modules.vector_store.milvus_ops import connect_milvus, init_collection, delete_document, ensure_connection, update_metadata_in_vector_store, get_user_collection_name, get_admin_collection_name, get_global_collection_name, list_all_collections, drop_collection, init_rag_collection, init_agent_memory_collection # Fixed import
+from src.modules.auth.auth import get_current_user, get_current_active_admin_user, authenticate_user, create_access_token, TokenData # Remove Token import
+from src.modules.auth.database import User, get_db, UserCreate, UserUpdate, UserResponse, ChatSession, ChatSessionCreate, ChatSessionResponse, ChatSessionListResponse, AgentTask as AgentTaskModel # Import AgentTaskModel
+from src.modules.agent_service.schemas import AgentTaskQueuedResponse # Import response model
+from src.modules.agent_service.tasks import execute_agent_task # Import celery task
 from src.modules.config.config import CONFIG, ChatConfig, OllamaConfig, OpenAIConfig, MilvusConfig, EmbeddingConfig, IngestionConfig, PresentationConfig, ResearchConfig, WebSearchConfig, SearchConfig, AuthConfig
 from src.modules.ingestion.ingest import upload_document # Fixed import
 from src.modules.generation.generate import get_openai_client, websocket_endpoint as chat_websocket_handler
@@ -96,57 +100,50 @@ logger = logging.getLogger(__name__)
 starlette.formparsers.MultiPartParser.max_file_size = 100 * 1024 * 1024
 starlette.formparsers.FormParser.max_field_size = 100 * 1024 * 1024 # Also increase field size limit
 
+# Import memory store initialization
+# from src.modules.agent_service.memory import initialize_agent_memory_store # Removed this unused import
+
+# Import agent models
+from src.modules.auth.database import Agent # Import SQLAlchemy Agent model from database.py
+from src.modules.agent_service.models import AgentTask # Keep Pydantic AgentTask import from agent_service/models.py
+from src.modules.agent_service.schemas import ScratchpadEntrySchema
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize connections, collections, and database on startup."""
-    logger.info("App starting up...")
+    logger.info("Application startup sequence initiated... 🌱")
+    
     # --- Database Setup ---
-    try:
-        logger.info("Initializing database...")
-        create_db_and_tables() # Create tables if they don't exist (Now imported)
-        logger.info("Database tables checked/created.")
-        
-        # Create initial admin user if none exists
-        db = SessionLocal() # Use SessionLocal directly here for lifespan setup
-        try:
-            await create_initial_admin_user(db)
-        finally:
-            db.close()
-            
-    except Exception as e:
-        logger.error(f"Failed to initialize database or create admin user: {str(e)}", exc_info=True)
-        # Decide if the app should fail to start here. For now, we log and continue.
-
+    logger.info("Initializing database and tables...")
+    create_db_and_tables()
+    logger.info("Database initialized.")
+    
     # --- Milvus Setup ---
-    # --- REMOVING temporary disable block ---
     try:
         # Ensure Milvus connection
         ensure_connection()
         logger.info("Connected to Milvus—waiting for it to be ready...")
+        await asyncio.sleep(1) # Short delay
         
-        # Give Milvus a sec to get its shit together
-        await asyncio.sleep(2)
-        
-        # Initialize CORE collections (admin and global)
-        admin_collection_name = get_admin_collection_name()
-        global_collection_name = get_global_collection_name()
-        if admin_collection_name:
-            init_collection(admin_collection_name)
-            logger.info(f"Initialized Admin Milvus collection: {admin_collection_name} 🚀")
-        if global_collection_name:
-             init_collection(global_collection_name)
-             logger.info(f"Initialized Global Milvus collection: {global_collection_name} 🚀")
-        # User collections are created dynamically on first upload/search
-        
+        # Initialize RAG collection
+        logger.info("Initializing RAG Milvus collection...")
+        await init_rag_collection() # Uses name from config
+        logger.info("RAG Milvus collection initialized.")
     except Exception as e:
-        logger.error(f"Failed to initialize Milvus: {str(e)}")
-    # logger.warning("Milvus initialization temporarily disabled for debugging.") # Ensure this line is commented or removed
-    # --- End temporary disable ---
+        logger.error(f"Failed during Milvus initialization for RAG: {e}", exc_info=True)
+        # Decide if we should raise or continue depending on criticality
+        # raise # Or maybe allow startup?
+
+    # --- Other Startup Logic --- 
+    logger.info("Running DB migrations...")
     
+    logger.info("Startup sequence complete. Application is ready. 🚀")
     yield  # App is running here
     
     # Cleanup (if needed)
     logger.info("Shutting down—cleanup time! 🧹")
+    # Add disconnect calls if necessary
+    # await disconnect_milvus()
 
 # Initialize FastAPI with some metadata and lifespan
 app = FastAPI(
@@ -240,6 +237,13 @@ class ResearchResponse(BaseModel):
     """Research response packed with knowledge."""
     report: ResearchReport
 
+# --- New Response Model for Latest Agent Run --- #
+class LatestAgentRunResponse(BaseModel):
+    """Response containing the scratchpad from the latest agent task run."""
+    scratchpad: List[ScratchpadEntrySchema] = Field(default_factory=list, description="The list of scratchpad entries from the latest run.")
+    task_id: Optional[int] = Field(None, description="The ID of the latest task run.")
+    timestamp: Optional[str] = Field(None, description="Timestamp of the latest task run completion.")
+
 class UploadRequest(BaseModel):
     """Document upload request with tags and metadata."""
     tags: List[str] = []
@@ -264,6 +268,7 @@ class DocInfo(BaseModel):
     filename: str
     tags: List[str]
     metadata: Dict[str, Any]
+    scope: str
 
 class MetadataUpdateRequest(BaseModel):
     """Request model for updating document metadata."""
@@ -279,7 +284,11 @@ class Token(BaseModel):
     token_type: str
 
 @auth_router.post("/auth/login", response_model=Token)
-def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login_for_access_token(
+    response: Response, # Inject Response object
+    form_data: OAuth2PasswordRequestForm = Depends(), 
+    db: Session = Depends(get_db)
+):
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -294,6 +303,18 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
     access_token = create_access_token(
         data={"sub": user.username, "role": user.role, "id": user.id} # Pass data payload only
     )
+
+    # Set the cookie
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True, # Essential for security
+        secure=CONFIG.auth.secure_cookie, # Use secure=True in production (HTTPS)
+        samesite="strict", # Or 'lax' depending on needs
+        max_age=CONFIG.auth.access_token_expire_minutes * 60 # In seconds
+    )
+
+    # Return token in body as well for compatibility
     return {"access_token": access_token, "token_type": "bearer"}
 
 @api_router.get("/users/me", response_model=UserResponse)
@@ -445,9 +466,18 @@ def health_check():
 
 # Protected endpoints
 @api_router.get("/config", dependencies=[Depends(get_current_user)])
-async def get_config():
-    """Retrieve the current backend configuration."""
-    return CONFIG
+async def get_app_config():
+    """Returns the current application configuration."""
+    # Need to carefully select what parts of the config are safe to expose
+    # Use .model_dump() for Pydantic v2 compatibility
+    logger.debug(f"Attempting to return config model_dump()") 
+    try:
+        config_dict = CONFIG.model_dump() # Use model_dump() for Pydantic v2
+        logger.debug(f"Successfully created config dump: {config_dict}")
+        return config_dict
+    except Exception as e:
+        logger.error(f"Failed to dump config model: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to serialize configuration.")
 
 # --- Pydantic Models for Config Update ---
 
@@ -641,45 +671,72 @@ async def list_documents(user: User = Depends(get_current_user)):
     """List documents accessible to the user (personal + global)."""
     collections_to_query = []
     if user.role == 'admin':
+        # Admins can see their own + global
         collections_to_query.append(get_admin_collection_name())
+        collections_to_query.append(get_global_collection_name())
     else:
+        # Regular users see their own + global
         collections_to_query.append(get_user_collection_name(user.id))
-    collections_to_query.append(get_global_collection_name())
+        collections_to_query.append(get_global_collection_name())
     
     all_docs = {}
+    output_fields = [
+        CONFIG.milvus.filename_field, 
+        CONFIG.milvus.metadata_field, 
+        CONFIG.milvus.tags_field, 
+        CONFIG.milvus.chunk_id_field # Using chunk_id as doc_id proxy
+    ]
+    
     try:
-        for collection_name in collections_to_query:
-            # Check if collection exists before querying
+        for collection_name in set(collections_to_query): # Use set to avoid duplicates
+            logger.debug(f"Checking collection '{collection_name}' for listing documents...")
             if not utility.has_collection(collection_name):
                 logger.info(f"Collection '{collection_name}' not found, skipping for list.")
                 continue
                 
-            collection = init_collection(collection_name)
-            # Query distinct filenames and one instance of their metadata/tags
-            # Using query with limit=1 and group_by might be complex for getting metadata.
-            # A simpler approach is to query all, then process in Python.
-            results = collection.query(
-                expr="", # No filter, get all
-                output_fields=[CONFIG.milvus.filename_field, CONFIG.milvus.metadata_field, CONFIG.milvus.tags_field, CONFIG.milvus.chunk_id_field],
-                limit=16384 # High limit to get all docs likely
-            )
-            
-            for hit in results:
-                 filename = hit.get(CONFIG.milvus.filename_field)
-                 if filename and filename not in all_docs:
-                     try:
-                         metadata = json.loads(hit.get(CONFIG.milvus.metadata_field, '{}'))
-                     except:
-                         metadata = {}
-                     all_docs[filename] = DocInfo(
-                         doc_id=hit.get(CONFIG.milvus.chunk_id_field), # Using chunk_id as a proxy doc_id here
-                         filename=filename,
-                         tags=hit.get(CONFIG.milvus.tags_field, []),
-                         metadata=metadata,
-                         # Add owner/scope info
-                         scope=collection_name # Indicate which collection it came from
-                     )
-                     
+            try:
+                # Load the existing collection, don't initialize schema
+                collection = Collection(collection_name) 
+                collection.load() # Ensure collection is loaded for query
+                logger.debug(f"Querying collection '{collection_name}'...")
+                
+                results = collection.query(
+                    expr="", # No filter, get all
+                    output_fields=output_fields,
+                    limit=16384 # Adjust limit as needed
+                )
+                logger.debug(f"Found {len(results)} results in '{collection_name}'.")
+                
+                for hit in results:
+                     filename = hit.get(CONFIG.milvus.filename_field)
+                     if filename and filename not in all_docs:
+                         try:
+                             # Metadata might be JSON string or dict, handle parsing
+                             metadata_raw = hit.get(CONFIG.milvus.metadata_field, '{}')
+                             metadata = json.loads(metadata_raw) if isinstance(metadata_raw, str) else metadata_raw
+                         except json.JSONDecodeError:
+                             logger.warning(f"Failed to parse metadata for chunk in {filename}: {metadata_raw}")
+                             metadata = {}
+                         
+                         scope = "global" # Default scope
+                         if collection_name == get_user_collection_name(user.id):
+                             scope = "user"
+                         elif collection_name == get_admin_collection_name():
+                              scope = "admin"
+                              
+                         all_docs[filename] = DocInfo(
+                             doc_id=hit.get(CONFIG.milvus.chunk_id_field), # Use first chunk ID as proxy
+                             filename=filename,
+                             tags=hit.get(CONFIG.milvus.tags_field, []),
+                             metadata=metadata,
+                             scope=scope # Add scope info
+                         )
+                # Release collection after query (optional, depends on connection management)
+                # collection.release() 
+            except Exception as query_err:
+                 logger.error(f"Error querying collection '{collection_name}': {query_err}", exc_info=True)
+                 # Continue to next collection if one fails? Or raise error?
+
         logger.info(f"Listed {len(all_docs)} unique documents for user '{user.username}'.")
         return list(all_docs.values())
 
@@ -812,63 +869,28 @@ async def get_document(filename: str, user: User = Depends(get_current_user)):
             detail=f"Error serving PDF: {str(e)}"
         )
 
-@api_router.post("/presentation", dependencies=[Depends(get_current_user)])
-async def generate_presentation(request: PresentationRequest, user: User = Depends(get_current_user)):
-    """Generate a presentation based on the provided prompt."""
-    logger.info(f"Presentation request incoming for '{request.prompt}' by user '{user.username}'—slides gonna be lit! 🚀") # Log user
-    try:
-        # Use await here since create_presentation is a coroutine
-        result = await create_presentation(
-            prompt=request.prompt,
-            user=user, # Pass the user object
-            filename=request.filename,
-            n_slides=request.n_slides,
-            model=request.model,
-            provider=request.provider
-        )
-        # Return JSON response with CORS headers
-        return JSONResponse(
-            content=result,
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, Authorization",
-                "Access-Control-Max-Age": "86400",
-            }
-        )
-    except Exception as e:
-        logger.error(f"Presentation generation failed: {str(e)} 😅")
-        # Return error response with CORS headers
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)},
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, Authorization",
-                "Access-Control-Max-Age": "86400",
-            }
-        )
+# Change response model to indicate queuing, add db dependency
+@api_router.post("/research", response_model=ResearchResponse)
+async def generate_research(
+    request: ResearchRequest,
+    user: User = Depends(get_current_user),
+):
+    logger.info(f"Research request incoming for '{request.query}' by user '{user.username}'...") # Simplified log
+    # Removed logging for model/provider as they are no longer passed directly
 
-@api_router.post("/research", dependencies=[Depends(get_current_user)])
-async def generate_research(request: ResearchRequest, user: User = Depends(get_current_user)):
-    """Generate a research report based on the provided query."""
-    logger.info(f"Research request incoming for '{request.query}' by user '{user.username}'—knowledge synthesis time! 🔬 Use Web: {request.use_web}, Use Knowledge: {request.use_knowledge}") # Log user
-    # ---> Log received model/provider <--- 
-    logger.info(f"Received model='{request.model}', provider='{request.provider}' in request body.")
     try:
-        result = await create_research_report(
+        # Call the refactored function - remove model/provider as they are handled by agent config now
+        report_data = await create_research_report(
             query=request.query,
-            user=user, # Pass the user object
-            use_web=request.use_web,
-            use_knowledge=request.use_knowledge,
-            model=request.model, # Pass model
-            provider=request.provider # Pass provider
+            user=user
+            # model=model, # Removed
+            # provider=provider, # Removed
         )
-        return result
+        # Assuming create_research_report now returns the ResearchResponse structure directly
+        return report_data 
     except Exception as e:
-        logger.error(f"Research generation failed: {str(e)} 😅")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Research generation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to start research generation: {e}")
 
 @api_router.get("/providers/ollama/status", dependencies=[Depends(get_current_user)])
 async def get_ollama_status():
@@ -1053,6 +1075,85 @@ def init_core_collections():
     except Exception as e:
         logger.error(f"Failed to initialize core collections: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to initialize core Milvus collections.")
+
+# Routers from different modules
+# from src.modules.chat.api import router as chat_router # Removed
+# from src.modules.documents.api import router as documents_router # Removed
+# from src.modules.config.api import router as config_router # Removed
+# from src.modules.auth.api import router as auth_router # Removed
+# from src.modules.users.api import router as users_router # Removed
+# from src.modules.sessions.api import router as sessions_router # Removed
+# Import the new agent router
+from src.modules.agent_service.api import router as agents_router 
+
+
+# Mount routers
+# api_router.include_router(chat_router) # Removed
+# api_router.include_router(documents_router) # Removed
+# api_router.include_router(config_router) # Removed
+# api_router.include_router(auth_router) # Removed
+# api_router.include_router(users_router) # Removed
+# api_router.include_router(sessions_router) # Removed
+api_router.include_router(agents_router) # Mount the new agent router
+
+app.include_router(api_router)
+
+# === Agent Task Run Endpoints ===
+
+@api_router.get(
+    "/agents/{agent_id}/runs/latest",
+    response_model=LatestAgentRunResponse,
+    dependencies=[Depends(get_current_user)],
+    summary="Get Latest Agent Task Run Trace",
+    description="Retrieves the scratchpad from the most recently completed task run for a specific agent."
+)
+def get_latest_agent_run(
+    agent_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user) # Ensure user owns agent or is admin? Add check later if needed.
+):
+    """Fetches the latest task run for the given agent ID and returns its scratchpad."""
+    logger.info(f"Fetching latest task run for agent_id: {agent_id} by user: {current_user.username}")
+
+    # TODO: Add authorization check - does current_user own agent_id or is admin?
+    # agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    # if not agent or (agent.owner_user_id != current_user.id and not current_user.is_admin):
+    #     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found or not authorized")
+
+    latest_task = db.query(AgentTask)\
+                    .filter(AgentTask.agent_id == agent_id)\
+                    .order_by(AgentTask.created_at.desc())\
+                    .first()
+
+    if not latest_task:
+        logger.warning(f"No task runs found for agent_id: {agent_id}")
+        # Return empty response instead of 404, as agent exists but has no runs
+        return LatestAgentRunResponse(scratchpad=[], task_id=None, timestamp=None)
+
+    logger.info(f"Found latest task run ID: {latest_task.id} for agent_id: {agent_id}")
+
+    # Assuming scratchpad is stored as JSONB or similar and automatically deserialized by SQLAlchemy
+    # If it's stored as a plain JSON string, we need to parse it:
+    # scratchpad_data = json.loads(latest_task.scratchpad) if isinstance(latest_task.scratchpad, str) else latest_task.scratchpad
+
+    # Assuming direct access works and matches ScratchpadEntrySchema structure
+    # The type hint in AgentTask model for scratchpad should guide this.
+    # If AgentTask.scratchpad is List[Dict[str, Any]] or similar, this is likely fine.
+    scratchpad_data = latest_task.scratchpad or []
+
+    # Validate/parse with Pydantic schema if necessary (depends on how scratchpad is stored)
+    # validated_scratchpad = [ScratchpadEntrySchema.model_validate(entry) for entry in scratchpad_data]
+    # If validation is needed, uncomment the above and pass validated_scratchpad to the response.
+
+    return LatestAgentRunResponse(
+        scratchpad=scratchpad_data, # Use raw data for now, assuming compatibility
+        task_id=latest_task.id,
+        timestamp=latest_task.created_at.isoformat() if latest_task.created_at else None
+    )
+
+
+# === Chat History Endpoints ===
+# ... rest of the file ...
 
 if __name__ == "__main__":
     port = int(os.getenv("BACKEND_PORT", 8000))

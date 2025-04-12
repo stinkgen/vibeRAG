@@ -1,0 +1,7 @@
+.traceContainer {
+    height: 500px; /* Example height */
+    border: 1px solid #ccc;
+    background-color: #fafafa;
+}
+
+/* Add ReactFlow specific styles or overrides here */ 

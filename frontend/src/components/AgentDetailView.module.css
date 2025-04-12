@@ -1,0 +1,13 @@
+.detailContainer {
+    padding: 1rem;
+    border: 1px solid #ddd;
+    background-color: #fff;
+}
+
+.detailHeader {
+    font-size: 1.2em;
+    margin-bottom: 1rem;
+    font-weight: bold;
+}
+
+/* Add other styles for AgentDetailView here */ 

@@ -40,6 +40,10 @@ milvus==2.3.3
 # Add Postgres driver
 psycopg[binary]
 
+# Add Celery and Redis for background tasks
+celery>=5.0
+redis>=4.0
+
 # Add others as needed
 requests
 
@@ -55,3 +59,5 @@ pypdf
 # langchain_community==...
 # langchain_openai==...
 # langchain_milvus==...
+
+pydantic-settings

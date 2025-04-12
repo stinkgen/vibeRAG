@@ -1,9 +1,11 @@
 from dataclasses import dataclass, field
 import torch
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
 import os
 from dotenv import load_dotenv
 import secrets # Import secrets for generating JWT secret
+from pydantic_settings import BaseSettings
+from pydantic import Field, BaseModel
 
 # Load environment variables
 load_dotenv()
@@ -18,6 +20,7 @@ class AuthConfig:
     secret_key: str = os.getenv("JWT_SECRET_KEY", DEFAULT_JWT_SECRET)
     algorithm: str = "HS256"
     access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60 * 24)) # Default 1 day
+    secure_cookie: bool = Field(default=False, description="Set True if using HTTPS") # Added for secure cookie flag
 
 @dataclass
 class SearchConfig:
@@ -42,7 +45,8 @@ class MilvusConfig:
     port: int = int(os.getenv("MILVUS_PORT", "19530"))  # Milvus server port
     dim: int = 384  # Embedding dimension
     embedding_dim: int = 384  # Alias for dim to maintain compatibility
-    collection_name: str = os.getenv("MILVUS_COLLECTION", "documents")  # Collection name
+    collection_name: str = os.getenv("MILVUS_COLLECTION", "documents")  # Collection name FOR RAG DOCS
+    agent_memory_collection_name: str = os.getenv("MILVUS_AGENT_MEMORY_COLLECTION", "agent_memories") # Collection for agent memories
     index_type: str = "HNSW"  # Index type
     metric_type: str = "L2"  # Distance metric
     default_batch_size: int = 100  # Default batch size for operations
@@ -139,8 +143,48 @@ class PresentationConfig:
     provider: str = os.getenv("CHAT_PROVIDER", "openai")  # Provider to use (openai or ollama)
     temperature: float = float(os.getenv("CHAT_TEMPERATURE", "0.7"))  # Temperature for generation
 
+DEFAULT_SUMMARY_PROMPT = (
+    "Based on the following conversation history (Thought/Action/Observation steps), "
+    "identify and summarize the key insights, decisions made, or facts learned. "
+    "Focus on information that would be valuable context for future tasks related to the overall goal. "
+    "Be concise.\n\n"
+    "Conversation History:\n"
+    "{scratchpad_content}"
+    "\n\nSummary:"
+)
+
 @dataclass
-class Config:
+class AgentConfig:
+    max_steps: int = 10
+    # Add summarization config
+    summarization_enabled: bool = False
+    summarization_prompt_template: str = DEFAULT_SUMMARY_PROMPT
+    summarization_llm_provider: Optional[str] = None # Uses default chat LLM if None
+    summarization_llm_model: Optional[str] = None    # Uses default chat LLM if None
+    embed_summaries: bool = True # Whether to generate/store embeddings for summaries
+    memory_retrieval_limit: int = 5 # Max memories to retrieve
+    # Default Research Agent
+    default_research_agent_name: str = "Default Research Agent"
+    default_research_agent_persona: str = "You are a thorough and objective research assistant."
+    default_research_agent_goals: str = "Analyze information, identify key insights, and generate concise research reports."
+    # Default Presentation Agent
+    default_presentation_agent_name: str = "Default Presentation Agent"
+    default_presentation_agent_persona: str = "You are a creative and engaging presentation designer."
+    default_presentation_agent_goals: str = "Transform research findings or user prompts into clear and visually appealing slide presentations."
+
+@dataclass
+class CeleryConfig:
+    broker_url: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+    result_backend: str = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+    task_serializer: str = "json"
+    result_serializer: str = "json"
+    accept_content: List[str] = field(default_factory=lambda: ["json"])
+    timezone: str = "UTC"
+    enable_utc: bool = True
+    # Add other Celery settings as needed
+
+@dataclass
+class AppConfig:
     """Global configuration."""
     auth: AuthConfig = field(default_factory=AuthConfig)
     chat: ChatConfig = field(default_factory=ChatConfig)
@@ -153,5 +197,52 @@ class Config:
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
     openai: OpenAIConfig = field(default_factory=OpenAIConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
+    agent: AgentConfig = field(default_factory=AgentConfig)
+    celery: CeleryConfig = field(default_factory=CeleryConfig) # Add Celery config
 
-CONFIG = Config()
+# --- Load Configuration --- 
+def load_config() -> AppConfig:
+    """Loads configuration from environment variables or defaults."""
+    # ... existing config loading ...
+    
+    agent_config = AgentConfig(
+        max_steps=int(os.getenv("AGENT_MAX_STEPS", "10")),
+        summarization_enabled=os.getenv("AGENT_SUMMARIZATION_ENABLED", "False").lower() == "true",
+        summarization_prompt_template=os.getenv("AGENT_SUMMARIZATION_PROMPT", DEFAULT_SUMMARY_PROMPT),
+        summarization_llm_provider=os.getenv("AGENT_SUMMARIZATION_LLM_PROVIDER", None),
+        summarization_llm_model=os.getenv("AGENT_SUMMARIZATION_LLM_MODEL", None),
+        embed_summaries=os.getenv("AGENT_EMBED_SUMMARIES", "True").lower() == "true",
+        memory_retrieval_limit=int(os.getenv("AGENT_MEMORY_RETRIEVAL_LIMIT", "5")),
+        default_research_agent_name=os.getenv("DEFAULT_RESEARCH_AGENT_NAME", "Default Research Agent"),
+        default_research_agent_persona=os.getenv("DEFAULT_RESEARCH_AGENT_PERSONA", "You are a thorough and objective research assistant."),
+        default_research_agent_goals=os.getenv("DEFAULT_RESEARCH_AGENT_GOALS", "Analyze information, identify key insights, and generate concise research reports."),
+        default_presentation_agent_name=os.getenv("DEFAULT_PRESENTATION_AGENT_NAME", "Default Presentation Agent"),
+        default_presentation_agent_persona=os.getenv("DEFAULT_PRESENTATION_AGENT_PERSONA", "You are a creative and engaging presentation designer."),
+        default_presentation_agent_goals=os.getenv("DEFAULT_PRESENTATION_AGENT_GOALS", "Transform research findings or user prompts into clear and visually appealing slide presentations.")
+    )
+    
+    milvus_config = MilvusConfig(
+        host=os.getenv("MILVUS_HOST", "localhost"),
+        port=int(os.getenv("MILVUS_PORT", "19530")),
+        dim=int(os.getenv("EMBEDDING_DIM", "384")), # Use EMBEDDING_DIM consistently?
+        embedding_dim=int(os.getenv("EMBEDDING_DIM", "384")), # Or derive from EmbeddingConfig?
+        collection_name=os.getenv("MILVUS_COLLECTION", "documents"),
+        agent_memory_collection_name=os.getenv("MILVUS_AGENT_MEMORY_COLLECTION", "agent_memories"),
+        # ... load other milvus fields ...
+    )
+    
+    celery_config = CeleryConfig(
+        broker_url=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0"),
+        result_backend=os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+        # Load other Celery settings if needed
+    )
+    
+    return AppConfig(
+        # ... existing AppConfig fields ...
+        agent=agent_config,
+        milvus=milvus_config,
+        celery=celery_config,
+        # ... other fields ...
+    )
+
+CONFIG = load_config()

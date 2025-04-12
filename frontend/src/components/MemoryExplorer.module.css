@@ -1,0 +1,13 @@
+.memoryContainer {
+    border: 1px solid #e0e0e0;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    background-color: #fff;
+}
+
+.memoryContent {
+    white-space: pre-wrap; /* Preserve whitespace */
+    font-size: 0.9em;
+}
+
+/* Add other styles for MemoryExplorer here */ 

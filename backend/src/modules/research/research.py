@@ -9,11 +9,21 @@ import asyncio
 import json
 from typing import Dict, List, Any, Optional
 from fastapi import HTTPException
+from sqlalchemy.orm import Session # Import Session for type hinting
 
 from src.modules.config.config import CONFIG
 from src.modules.retrieval.search import semantic_search, google_search
 from src.modules.generation.generate import generate_with_provider, GenerationError
-from src.modules.auth.database import User # Import User model
+from src.modules.auth.database import User, get_db # Import User model and db session
+
+# --- Import Agent Service components --- 
+from src.modules.agent_service.manager import (
+    create_agent_definition, 
+    get_agent_definitions_by_user # To find existing default agent
+)
+from src.modules.agent_service.models import AgentTask, AgentOutput
+from src.modules.auth.database import AgentCreate # For creating default agent
+# -------------------------------------
 
 # Configure logging
 logging.basicConfig(
@@ -26,7 +36,95 @@ def format_context(chunks: List[Dict[str, Any]]) -> str:
     """Format chunks into a context string for the LLM."""
     return "\n\n".join(chunk["text"] for chunk in chunks)
 
-async def create_research_report(
+# Define the expected output structure (Pydantic model might be better)
+class ResearchReport(Dict):
+    title: str
+    summary: str
+    insights: List[str]
+    analysis: str
+    sources: List[str]
+
+def format_web_results(results: List[Dict[str, str]]) -> str:
+    """Format web results into a string for context."""
+    if not results:
+        return ""
+    return "\n".join(f"Title: {res.get('title', '')}\nURL: {res.get('link', '')}\nSnippet: {res.get('snippet', '')}\n---" for res in results)
+
+# --- Function to find or create the default research agent ---
+async def _get_or_create_default_research_agent(db: Session, user: User) -> int:
+    """Finds the default research agent for the user, creates if not exists."""
+    agent_name = CONFIG.agent.default_research_agent_name
+    
+    # Check if agent exists
+    existing_agents = get_agent_definitions_by_user(db, user_id=user.id, limit=1000) # Get all for check
+    found_agent = next((agent for agent in existing_agents if agent.name == agent_name), None)
+    
+    if found_agent:
+        logger.info(f"Found existing default research agent (ID: {found_agent.id}) for user {user.username}")
+        # Ensure it's active? Or activate it?
+        # if not found_agent.is_active:
+        #     update_agent_definition(...) 
+        return found_agent.id
+    else:
+        # Create the default agent
+        logger.info(f"Creating default research agent for user {user.username}")
+        agent_data = AgentCreate(
+            owner_user_id=user.id, # Set owner correctly
+            name=agent_name,
+            persona=CONFIG.agent.default_research_agent_persona,
+            goals=CONFIG.agent.default_research_agent_goals,
+            # base_prompt could be added if needed
+            is_active=True
+        )
+        new_agent = create_agent_definition(db, agent=agent_data, owner=user)
+        logger.info(f"Created default research agent with ID: {new_agent.id}")
+        return new_agent.id
+
+# --- Main function refactored to use Agent Service --- 
+async def create_research_report(query: str, user: User, use_web: bool = True) -> ResearchReport:
+    """Generates a research report by triggering the default research agent."""
+    log_prefix = f"[Research {user.username}]"
+    logger.info(f"{log_prefix} Starting research report generation for query: '{query[:50]}...'")
+    
+    db = next(get_db())
+    try:
+        # 1. Get Agent ID
+        agent_id = await _get_or_create_default_research_agent(db, user)
+        
+        # 2. Prepare Agent Task
+        # The agent's persona/goal already defines the task structure.
+        # We just need to pass the user's specific query and whether to use web search.
+        agent_goal = query 
+        input_data = {"use_web": use_web} # Pass web search preference
+        
+        task = AgentTask(
+            task_id=str(uuid.uuid4()),
+            agent_id=agent_id,
+            goal=agent_goal,
+            input_data=input_data
+        )
+        
+        # 3. Run Agent Task - THIS IS NOW HANDLED ASYNCHRONOUSLY
+        # logger.info(f"{log_prefix} Triggering agent {agent_id} with task ID {task.task_id}.")
+        # agent_result: AgentOutput = await run_agent_task(task=task, owner=user)
+        
+        # Return prepared data for the API endpoint to dispatch
+        logger.info(f"{log_prefix} Prepared task for agent {agent_id}. Returning info to dispatcher.")
+        return {
+            "agent_id": agent_id,
+            "goal": agent_goal,
+            "input_data": input_data,
+            "status": "prepared"
+        }
+
+    except Exception as e:
+        logger.exception(f"{log_prefix} Unexpected error during research report generation: {e}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error generating report: {str(e)}")
+    finally:
+        db.close() # Ensure db session is closed
+
+# --- Old implementation (keep for reference or remove) --- 
+async def create_research_report_old(
     query: str,
     user: User, # Added user object
     use_web: bool = True,

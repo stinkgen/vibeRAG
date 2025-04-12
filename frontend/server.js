@@ -172,19 +172,33 @@ server.on('upgrade', (request, clientSocket, head) => {
 
   console.log(`[Upgrade] Attempting upgrade for path: ${request.url} (pathname: ${pathname})`);
 
-  // Check only the pathname for the WebSocket route
+  // Determine the target backend WebSocket URL based on the requested path
+  let targetBackendWsUrl = null;
   if (pathname === '/api/v1/ws/chat') {
-    console.log(`[Upgrade] Pathname matches. Handling upgrade...`);
-
+    targetBackendWsUrl = `ws://backend:8000/api/v1/ws/chat${parsedUrl.search || ''}`;
+    console.log(`[Upgrade] Pathname matches chat WS. Target: ${targetBackendWsUrl}`);
+  } else if (pathname === '/api/v1/agents/ws/tasks') {
+    targetBackendWsUrl = `ws://backend:8000/api/v1/agents/ws/tasks${parsedUrl.search || ''}`;
+    console.log(`[Upgrade] Pathname matches agent tasks WS. Target: ${targetBackendWsUrl}`);
+  }
+  
+  // If the pathname matches one of our WebSocket routes, handle the upgrade
+  if (targetBackendWsUrl) {
     wss.handleUpgrade(request, clientSocket, head, (wsClient) => {
       console.log('[WSS] Client WebSocket handshake complete.');
       setupHeartbeat(wsClient, 'Client'); // Setup client heartbeat
 
-      // Construct backend URL - Forward query string (like ?token=...)
-      const backendWsTargetUrl = `${backendWsTarget}${parsedUrl.search || ''}`;
-      console.log(`[WSS] Establishing backend connection to ${backendWsTargetUrl}`);
+      console.log(`[WSS] Establishing backend connection to ${targetBackendWsUrl}`);
 
-      const backendSocket = new WebSocket(backendWsTargetUrl);
+      // Connect to the determined backend WebSocket URL
+      const backendSocket = new WebSocket(targetBackendWsUrl, {
+        // Forward relevant headers from the original request, especially cookies for auth
+        headers: { 
+          ...request.headers, // Pass original headers
+          // Explicitly forward cookies if needed (ws library might do this automatically depending on version, but being explicit is safer)
+          cookie: request.headers.cookie 
+        }
+      });
       setupHeartbeat(backendSocket, 'Backend'); // Setup backend heartbeat
 
       // --- Error Handling for Backend Connection ---
@@ -255,7 +269,7 @@ server.on('upgrade', (request, clientSocket, head) => {
 
   } else {
     // If the path doesn't match, destroy the socket
-    console.log(`[Upgrade] Pathname ${pathname} does not match target /api/v1/ws/chat. Destroying socket.`);
+    console.log(`[Upgrade] Pathname ${pathname} does not match any known WS target (/api/v1/ws/chat or /api/v1/agents/ws/tasks). Destroying socket.`);
     clientSocket.destroy();
   }
 }); // End of server.on('upgrade')

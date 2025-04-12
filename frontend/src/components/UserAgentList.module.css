@@ -1,0 +1,14 @@
+.listContainer {
+    margin-bottom: 1rem;
+}
+
+.agentItem {
+    padding: 0.5rem;
+    border-bottom: 1px solid #eee;
+}
+
+.agentItem:last-child {
+    border-bottom: none;
+}
+
+/* Add other styles for UserAgentList here */ 
