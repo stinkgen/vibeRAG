@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import styles from './CapabilityManager.module.css';
 
@@ -20,35 +20,34 @@ const CapabilityManager: React.FC<CapabilityManagerProps> = ({ agentId }) => {
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
 
-    // Fetch available tools and assigned tools on mount
-    useEffect(() => {
-        const fetchData = async () => {
-            setLoading(true);
-            setError(null);
-            try {
-                const [toolsResponse, capabilitiesResponse] = await Promise.all([
-                    axios.get<ToolInfo[]>('/api/agents/tools/'), // Use correct endpoint path
-                    axios.get<string[]>(`/api/agents/${agentId}/capabilities`)
-                ]);
-                
-                setAvailableTools(toolsResponse.data);
-                setAssignedTools(new Set(capabilitiesResponse.data));
-                console.log('Fetched available tools:', toolsResponse.data);
-                console.log('Fetched assigned capabilities:', capabilitiesResponse.data);
+    const fetchCapabilities = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const [allToolsResponse, agentCapsResponse] = await Promise.all([
+                axios.get<ToolInfo[]>('/api/v1/agents/tools/'),
+                axios.get<string[]>(`/api/v1/agents/${agentId}/capabilities`)
+            ]);
+            
+            setAvailableTools(allToolsResponse.data);
+            setAssignedTools(new Set(agentCapsResponse.data));
+            console.log('Fetched available tools:', allToolsResponse.data);
+            console.log('Fetched assigned capabilities:', agentCapsResponse.data);
 
-            } catch (err) {
-                console.error("Error fetching capabilities data:", err);
-                const errorMsg = axios.isAxiosError(err) && err.response 
-                                ? `Failed to load tool/capability data: ${err.response.data.detail || err.message}`
-                                : "An unknown error occurred.";
-                setError(errorMsg);
-            } finally {
-                setLoading(false);
-            }
-        };
-
-        fetchData();
+        } catch (err) {
+            console.error("Error fetching capabilities data:", err);
+            const errorMsg = axios.isAxiosError(err) && err.response 
+                            ? `Failed to load tool/capability data: ${err.response.data.detail || err.message}`
+                            : "An unknown error occurred.";
+            setError(errorMsg);
+        } finally {
+            setLoading(false);
+        }
     }, [agentId]);
+
+    useEffect(() => {
+        fetchCapabilities();
+    }, [fetchCapabilities]);
 
     const handleCapabilityChange = async (toolName: string, isChecked: boolean) => {
         setError(null); // Clear previous errors
@@ -67,10 +66,10 @@ const CapabilityManager: React.FC<CapabilityManagerProps> = ({ agentId }) => {
         try {
             if (isChecked) {
                 console.log(`Adding capability: ${toolName} to agent ${agentId}`);
-                await axios.post(`/api/agents/${agentId}/capabilities`, { tool_name: toolName });
+                await axios.post(`/api/v1/agents/${agentId}/capabilities`, { tool_name: toolName });
             } else {
                 console.log(`Removing capability: ${toolName} from agent ${agentId}`);
-                await axios.delete(`/api/agents/${agentId}/capabilities/${toolName}`);
+                await axios.delete(`/api/v1/agents/${agentId}/capabilities/${toolName}`);
             }
             console.log(`Capability ${toolName} ${isChecked ? 'added' : 'removed'} successfully.`);
             // UI state is already updated

@@ -108,7 +108,7 @@ class Agent(Base):
     
     owner = relationship("User", back_populates="agents")
     capabilities = relationship("AgentCapability", back_populates="agent", cascade="all, delete-orphan")
-    tasks = relationship("AgentTask", back_populates="agent") # Add relationship to tasks
+    tasks = relationship("AgentTaskModel", back_populates="agent") # Corrected string: AgentTask -> AgentTaskModel
     # logs = relationship("AgentLog", back_populates="agent", cascade="all, delete-orphan") # Removed - Logs might not need direct Agent backref if task_id is enough
 
 # --- SQLAlchemy AgentCapability Model ---
@@ -170,14 +170,16 @@ class AgentLog(Base):
     __tablename__ = "agent_logs"
     
     id = Column(Integer, primary_key=True, index=True)
-    agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False, index=True)
-    # task_id = Column(String, index=True, nullable=True) # Link logs within a specific task run
+    agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False, index=True) # Keep agent_id for broader context
+    task_id = Column(Integer, ForeignKey("agent_tasks.id"), nullable=False, index=True) # Link logs to a specific task run
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
     level = Column(String, index=True, default="INFO") # e.g., INFO, WARN, ERROR, DEBUG, PLAN, ACTION, TOOL_CALL, COMM
     message = Column(Text, nullable=False) # Human-readable log message
     details = Column(Text, nullable=True) # Optional structured details (e.g., JSON string of tool params/results)
     
-    # agent = relationship("Agent") # Optional relationship if needed
+    # Relationships
+    # agent = relationship("Agent") # Optional: Agent link can be indirect via task.agent
+    task = relationship("AgentTaskModel", back_populates="logs") # Added relationship back to task
 
 
 # --- Pydantic Models for Agent Log Data ---
@@ -271,23 +273,25 @@ class ChatSessionListResponse(ChatSessionBase):
         from_attributes = True
 
 # --- SQLAlchemy AgentTask Model ---
-class AgentTask(Base):
+class AgentTaskModel(Base):
     __tablename__ = "agent_tasks"
-
-    id = Column(Integer, primary_key=True, index=True) # Use auto-incrementing integer PK
+    id = Column(Integer, primary_key=True, index=True)
     agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True) # User who initiated task
-    celery_task_id = Column(String, unique=True, index=True, nullable=True) # Store Celery task UUID
-    goal = Column(Text, nullable=False) # Original goal/prompt
-    input_data = Column(JSON, nullable=True) # Optional input data
-    status = Column(String, default="pending", index=True, nullable=False) # pending, running, completed, failed
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    result_data = Column(JSON, nullable=True) # Store AgentOutput JSON on success
-    error_message = Column(Text, nullable=True) # Store error message on failure
-    # Add relationship back to Agent/User if needed
-    # agent = relationship("Agent")
-    # user = relationship("User")
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    goal = Column(Text, nullable=False)
+    input_data = Column(JSON, nullable=True) # Store any structured input
+    status = Column(String, index=True, default="pending") # e.g., pending, running, completed, failed
+    celery_task_id = Column(String, unique=True, index=True, nullable=True) # Store Celery task ID
+    created_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    final_result = Column(JSON, nullable=True) # Store the final output/result
+    error_message = Column(Text, nullable=True) # Store error if task failed
+
+    # Relationships
+    agent = relationship("Agent", back_populates="tasks") # Uncommented and added back_populates
+    user = relationship("User") # Assuming tasks don't need a backref from User
+    logs = relationship("AgentLog", back_populates="task", cascade="all, delete-orphan") # One task has many logs
 
 
 # --- DB Session Dependency ---

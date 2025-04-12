@@ -53,7 +53,7 @@ const MyAgentsPage: React.FC<MyAgentsPageProps> = ({ userId }) => {
         if (window.confirm(`Are you sure you want to delete agent ID ${agentId}?`)) {
             try {
                 console.log(`Deleting agent ${agentId}...`);
-                await axios.delete(`/api/agents/${agentId}`);
+                await axios.delete(`/api/v1/agents/${agentId}`);
                 console.log(`Agent ${agentId} deleted.`);
                 // Force refresh the list by changing the key
                 setRefreshListKey(prev => prev + 1);

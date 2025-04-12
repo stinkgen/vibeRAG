@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import axios, { AxiosResponse } from 'axios';
 import styles from './AgentForm.module.css';
 import CapabilityManager from './CapabilityManager';
 
@@ -61,7 +61,7 @@ const AgentForm: React.FC<AgentFormProps> = ({
                 setError(null);
                 try {
                     console.log(`Fetching details for agent to edit: ${agentIdToEdit}`);
-                    const response = await axios.get<Agent>(`/api/agents/${agentIdToEdit}`);
+                    const response = await axios.get<Agent>(`/api/v1/agents/${agentIdToEdit}`);
                     const agentData = response.data;
                     setFormData({
                         name: agentData.name,
@@ -138,13 +138,13 @@ const AgentForm: React.FC<AgentFormProps> = ({
         }
 
         try {
-            let response;
-            if (isEditing && agentIdToEdit) { // Use agentIdToEdit here
+            let response: AxiosResponse<Agent>;
+            if (isEditing && agentIdToEdit) {
                 console.log(`Updating agent ${agentIdToEdit} with payload:`, payload);
-                response = await axios.put<Agent>(`/api/agents/${agentIdToEdit}`, payload);
+                response = await axios.put<Agent>(`/api/v1/agents/${agentIdToEdit}`, payload);
             } else {
                 console.log(`Creating new agent with payload:`, payload);
-                response = await axios.post<Agent>('/api/agents/', payload);
+                response = await axios.post<Agent>('/api/v1/agents/', payload);
             }
             console.log('Agent form submission successful:', response.data);
             onFormSubmit(response.data); 

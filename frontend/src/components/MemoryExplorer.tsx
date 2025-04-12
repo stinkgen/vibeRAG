@@ -53,7 +53,7 @@ const MemoryExplorer: React.FC<MemoryExplorerProps> = ({ agentId, userId }) => {
             params.append('limit', '10'); // Example limit
             
             const response = await axios.get<AgentMemory[]>(
-                `/api/agents/${agentId}/memory`,
+                `/api/v1/agents/${agentId}/memory`,
                 { params }
             );
             setMemories(response.data);
@@ -93,7 +93,7 @@ const MemoryExplorer: React.FC<MemoryExplorerProps> = ({ agentId, userId }) => {
                 importance: manualImportance,
             };
             const response = await axios.post<AgentMemory>(
-                `/api/agents/${agentId}/memory`,
+                `/api/v1/agents/${agentId}/memory`,
                 payload
             );
             console.log('Manual memory added:', response.data);
@@ -130,7 +130,7 @@ const MemoryExplorer: React.FC<MemoryExplorerProps> = ({ agentId, userId }) => {
         console.log(`Deleting memory ${memoryId} for agent ${agentId}`);
 
         try {
-            await axios.delete(`/api/agents/${agentId}/memory/${memoryId}`);
+            await axios.delete(`/api/v1/agents/${agentId}/memory/${memoryId}`);
             console.log(`Memory ${memoryId} deleted.`);
             // Remove from list optimistically
             setMemories(prev => prev.filter(mem => mem.id !== memoryId));

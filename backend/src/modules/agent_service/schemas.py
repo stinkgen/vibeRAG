@@ -54,3 +54,21 @@ class ScratchpadEntrySchema(BaseModel):
 # (Could also go here, but currently defined in api.py and seems only used there)
 # class ActiveAgentTaskResponse(BaseModel):
 #    task_db_id: int 
+
+# --- Schemas for WebSocket Task Updates --- #
+
+class AgentFinalOutput(BaseModel):
+    """Structure for the final payload within a task update."""
+    result: Optional[str] = Field(None, description="Final result string if task completed successfully.")
+    error: Optional[str] = Field(None, description="Error message string if task failed.")
+
+class AgentTaskUpdatePayload(BaseModel):
+    """Structure for messages sent over WebSocket to update task status."""
+    type: str = Field("task_update", description="Message type identifier.")
+    task_db_id: int = Field(..., description="The database ID of the agent task being updated.")
+    status: str = Field(..., description="The current status of the task (e.g., 'running', 'completed', 'failed').")
+    payload: AgentFinalOutput = Field(..., description="The final result or error details.")
+
+
+# --- Agent Memory Schemas --- #
+# ... (existing memory schemas) ... 

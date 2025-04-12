@@ -25,6 +25,8 @@ from src.modules.vector_store.milvus_ops import (
 from src.modules.config.config import CONFIG  # Config's in the house! 🏠
 from src.modules.auth.database import User # Import User model
 from fastapi import HTTPException, UploadFile # Import UploadFile
+from pymilvus import Collection, utility # Add Collection, utility
+import json
 
 # Configure logging
 logging.basicConfig(
@@ -125,13 +127,25 @@ def upload_document(
              
     # Ensure the target collection exists before proceeding
     try:
-        init_collection(collection_name) 
-    except Exception as e:
-        logger.error(f"Failed to initialize target collection '{collection_name}': {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Could not prepare storage for collection {collection_name}")
+        # 1. Ensure connection and collection exist
+        ensure_connection() 
+        if not utility.has_collection(collection_name):
+            logger.error(f"Target collection '{collection_name}' does not exist and upload cannot create it. Use init_collection separately.")
+            # Depending on requirements, we might want to auto-create it here using init_rag_collection(collection_name)?
+            # For now, raise error if collection must pre-exist.
+            raise HTTPException(status_code=500, detail=f"Target collection '{collection_name}' does not exist.")
+        else:
+             logger.info(f"Target collection '{collection_name}' found.")
+             # Load the collection
+             collection = Collection(collection_name)
+             collection.load()
+             logger.info(f"Loaded collection '{collection_name}' for ingestion.")
 
-    try:
-        # 1. Parse Document (Pass the UploadFile object directly)
+        # 2. Delete existing chunks for this document to prevent duplicates
+        delete_document(collection_name=collection_name, filename=filename)
+        logger.info(f"Removed any existing chunks for '{filename}' from '{collection_name}'.")
+
+        # 3. Parse Document (Pass the UploadFile object directly)
         logger.info(f"Parsing document: {filename}")
         elements = parse_document(file, filename)
         logger.info(f"Parsed {len(elements)} elements from {filename}")
@@ -148,14 +162,14 @@ def upload_document(
                 "status": f"Ingestion skipped: No content parsed from document."
             }
 
-        # 2. Extract Metadata (Optional - Skip for now to simplify)
+        # 4. Extract Metadata (Optional - Skip for now to simplify)
         # extracted_meta = extract_metadata(" ".join(el.text for el in elements))
         # combined_metadata = {**(metadata or {}), **extracted_meta}
         combined_metadata = metadata or {}
         combined_metadata['filename'] = filename # Ensure filename is in metadata
         logger.info(f"Using combined metadata: {combined_metadata}")
 
-        # 3. Chunk Text (Using combined text from elements)
+        # 5. Chunk Text (Using combined text from elements)
         logger.info("Chunking text...")
         # Combine text, handling potential None values if elements are empty
         text_content = "\n\n".join([el.text for el in elements if hasattr(el, 'text') and el.text])
@@ -176,12 +190,12 @@ def upload_document(
             chunks_for_embedding.append({'text': text_chunk, 'metadata': chunk_meta})
             chunk_counter += 1
 
-        # 4. Embed Chunks
+        # 6. Embed Chunks
         logger.info("Generating embeddings...")
         embedded_chunks = embed_chunks(chunks_for_embedding)
         logger.info(f"Generated embeddings for {len(embedded_chunks)} chunks.")
 
-        # 5. Store in Milvus
+        # 7. Store in Milvus
         logger.info(f"Storing chunks in collection: {collection_name}")
         store_with_metadata(
             collection_name=collection_name, 

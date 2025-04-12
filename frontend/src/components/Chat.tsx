@@ -70,10 +70,11 @@ function Chat({ isAuthReady }: ChatProps) {
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [showSources, setShowSources] = useState<{ [key: number]: boolean }>({});
-    const ws = useRef<WebSocket | null>(null);
+    const agentWs = useRef<WebSocket | null>(null);
+    const chatWs = useRef<WebSocket | null>(null);
     const messagesEndRef = useRef<null | HTMLDivElement>(null);
     const [pendingAgentTasks, setPendingAgentTasks] = useState<Record<number, string>>({}); // { task_db_id: message_id }
-    const currentUserId = useRef<number | null>(null); // User ID needed for WS connection logic (if not derived from token)
+    const currentUserId = useRef<number | null>(null);
     
     // --- Session State ---
     const [sessions, setSessions] = useState<ChatSessionData[]>([]);
@@ -225,68 +226,63 @@ function Chat({ isAuthReady }: ChatProps) {
         }
     }, [isAuthReady]);
 
-    const connectWebSocket = useCallback(() => {
+    const connectAgentWebSocket = useCallback(() => {
         // Check isAuthReady before connecting
         if (!isAuthReady) {
-            console.log("WebSocket connection deferred: Auth not ready.");
+            console.log("Agent WS connection deferred: Auth not ready.");
             return;
         }
         if (!currentUserId.current) {
-            console.error("Cannot connect WebSocket: User ID not available (derived from token).");
+            console.error("Cannot connect Agent WebSocket: User ID not available (derived from token).");
             return;
         }
-        if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-            console.log("WebSocket already connected.");
+        if (agentWs.current && agentWs.current.readyState === WebSocket.OPEN) {
+            console.log("Agent WebSocket already connected.");
             return;
         }
         
-        // Get token directly from localStorage
         const storedToken = localStorage.getItem('vibeRAG_authToken');
         if (!storedToken) { 
-            console.error("WebSocket connection failed: No auth token found in localStorage.");
-            setError("Authentication token not found. Please log in again."); // Provide user feedback
+            console.error("Agent WS connection failed: No auth token found.");
+            setError("Auth token missing. Please log in.");
             return;
         }
 
-        // Construct WS URL - Append token as query parameter
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${wsProtocol}//${window.location.host}/api/v1/agents/ws/tasks?token=${encodeURIComponent(storedToken)}`; 
+        const agentWsUrl = `${wsProtocol}//${window.location.host}/api/v1/agents/ws/tasks?token=${encodeURIComponent(storedToken)}`; 
         
-        console.log(`Attempting to connect WebSocket: ${wsUrl}`);
-        ws.current = new WebSocket(wsUrl);
+        console.log(`Attempting to connect Agent WebSocket: ${agentWsUrl}`);
+        agentWs.current = new WebSocket(agentWsUrl);
 
-        ws.current.onopen = () => {
-            console.log('WebSocket Connected');
-            setError(null); // Clear connection errors on successful open
+        agentWs.current.onopen = () => {
+            console.log('Agent WebSocket Connected');
+            // setError(null); // Don't clear general error here
         };
 
-        ws.current.onclose = (event) => {
-            console.log('WebSocket Disconnected:', event.code, event.reason);
-            ws.current = null; // Reset ref first
+        agentWs.current.onclose = (event) => {
+            console.log('Agent WebSocket Disconnected:', event.code, event.reason);
+            agentWs.current = null; 
             if (event.code === 1008) { 
-                setError("WebSocket connection failed: Authentication error. Please refresh or log in again.");
-            } else if (!event.wasClean && isAuthReady) { // Only try to reconnect if not a clean close and we are still authenticated
-                setError("WebSocket connection lost. Attempting to reconnect...");
+                setError("Agent WebSocket failed: Auth error.");
+            } else if (!event.wasClean && isAuthReady) {
+                setError("Agent WebSocket connection lost. Reconnecting...");
                 setTimeout(() => {
-                    console.log("Attempting WebSocket reconnect...");
-                    // Check isAuthReady again before reconnecting
-                    if (isAuthReady) connectWebSocket(); 
+                    if (isAuthReady) connectAgentWebSocket(); 
                 }, 5000); 
-            } else {
-                 setError(null); // Clear error on clean close or if auth is no longer ready
             }
         };
 
-        ws.current.onerror = (error) => {
-            console.error('WebSocket Error:', error);
-            setError("WebSocket connection error.");
-            ws.current = null; // Ensure ref is null on error
+        agentWs.current.onerror = (error) => {
+            console.error('Agent WebSocket Error:', error);
+            setError("Agent WebSocket connection error.");
+            agentWs.current = null; 
         };
 
-        ws.current.onmessage = (event) => {
+        // Specific message handler for Agent WS
+        agentWs.current.onmessage = (event) => {
             try {
                 const messageData = JSON.parse(event.data);
-                console.log('WebSocket Message Received:', messageData);
+                console.log('Agent WS Message Received:', messageData);
 
                 if (messageData.type === 'task_update') {
                     const update = messageData as AgentTaskUpdatePayload;
@@ -305,49 +301,103 @@ function Chat({ isAuthReady }: ChatProps) {
                                     return {
                                         ...msg,
                                         text: `${msg.text}\n\n**Agent Result:**\n${resultText}`,
-                                        isLoading: false, // Mark as no longer loading
-                                        agentTaskComplete: true, // Mark as complete
+                                        isLoading: false, 
+                                        agentTaskComplete: true, 
                                     };
                                 }
                                 return msg;
                             })
                         );
-                        // Remove task from pending map once updated
                         setPendingAgentTasks(prev => {
                             const newPending = { ...prev };
                             delete newPending[update.task_db_id];
                             return newPending;
                         });
                     } else {
-                        console.warn(`Received task update for unknown/already completed task ID: ${update.task_db_id}`);
-            }
-        } else {
-                     console.log("Received non-task_update WebSocket message:", messageData);
+                        console.warn(`Received task update for unknown/completed task: ${update.task_db_id}`);
+                    }
+                } else {
+                     console.log("Received unexpected Agent WS message type:", messageData);
                 }
             } catch (e) {
-                console.error('Failed to parse WebSocket message:', event.data, e);
+                console.error('Failed to parse Agent WS message:', event.data, e);
             }
         };
-    // Include isAuthReady in dependencies
-    }, [isAuthReady, setError]); 
+    }, [isAuthReady, setError, pendingAgentTasks]);
 
-    // Effect to connect WebSocket when auth is ready 
-    useEffect(() => {
-        if (isAuthReady && !ws.current) {
-            connectWebSocket();
+    // --- New function for Chat WebSocket --- 
+    const connectChatWebSocket = useCallback(() => {
+        if (!isAuthReady) {
+            console.log("Chat WS connection deferred: Auth not ready.");
+            return;
         }
-        // Cleanup function to close WebSocket on component unmount or auth loss
-        return () => {
-            if (ws.current) {
-                console.log("Closing WebSocket connection on cleanup.");
-                // Prevent automatic reconnection attempts after cleanup
-                ws.current.onclose = null; 
-                ws.current.close();
-                ws.current = null;
+        if (chatWs.current && chatWs.current.readyState === WebSocket.OPEN) {
+            console.log("Chat WebSocket already connected.");
+            return;
+        }
+
+        // Chat WS uses cookie auth handled by backend, no token needed in URL
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const chatWsUrl = `${wsProtocol}//${window.location.host}/api/v1/ws/chat`; 
+        
+        console.log(`Attempting to connect Chat WebSocket: ${chatWsUrl}`);
+        chatWs.current = new WebSocket(chatWsUrl);
+
+        chatWs.current.onopen = () => {
+            console.log('Chat WebSocket Connected');
+            setError(null); // Clear errors when chat connects
+        };
+
+        chatWs.current.onclose = (event) => {
+            console.log('Chat WebSocket Disconnected:', event.code, event.reason);
+            chatWs.current = null; 
+            // Don't necessarily set error or reconnect automatically for chat?
+            // Let user see the banner.
+            if (event.code !== 1000) { // 1000 is normal closure
+                 setError("Chat connection lost. Please refresh.");
             }
         };
-    // Dependency now includes isAuthReady and connectWebSocket
-    }, [isAuthReady, connectWebSocket]); 
+
+        chatWs.current.onerror = (error) => {
+            console.error('Chat WebSocket Error:', error);
+            setError("Chat connection error.");
+            chatWs.current = null; 
+        };
+
+        // Specific message handler for Chat WS
+        chatWs.current.onmessage = (event) => {
+            // TODO: Implement message handling for incoming chat messages/streams
+            // This will likely involve updating the `messages` state
+            console.log('Chat WS Message Received:', event.data);
+            // Example: If streaming, append data; if complete, add new message
+            // Need to coordinate with backend message format
+        };
+    }, [isAuthReady, setError]);
+
+    // Effect to connect WebSockets when auth is ready 
+    useEffect(() => {
+        if (isAuthReady) {
+            console.log("Auth is ready, connecting WebSockets...");
+            connectAgentWebSocket();
+            connectChatWebSocket();
+        }
+        // Cleanup function to close WebSockets
+        return () => {
+            if (agentWs.current) {
+                console.log("Closing Agent WebSocket connection.");
+                agentWs.current.onclose = null; 
+                agentWs.current.close();
+                agentWs.current = null;
+            }
+            if (chatWs.current) {
+                console.log("Closing Chat WebSocket connection.");
+                chatWs.current.onclose = null; 
+                chatWs.current.close();
+                chatWs.current = null;
+            }
+        };
+    // Rerun if auth status changes OR if the connect functions themselves change (due to dependencies)
+    }, [isAuthReady, connectAgentWebSocket, connectChatWebSocket]); 
 
     useEffect(() => {
         scrollToBottom();
@@ -365,16 +415,14 @@ function Chat({ isAuthReady }: ChatProps) {
         };
         setMessages(prev => [...prev, newUserMessage]);
         setInput('');
-        // Don't set global isLoading for agent commands yet
 
         // --- Agent Command Handling --- 
-        const agentMatch = userMessage.match(/^\/agent\s+(\d+)\s+([\s\S]*)/); // Escape the forward slash
+        const agentMatch = userMessage.match(/^\/agent\s+(\d+)\s+([\s\S]*)/);
         if (agentMatch) {
             const agentId = parseInt(agentMatch[1], 10);
             const goal = agentMatch[2].trim();
             const loadingMessageId = Date.now().toString() + '-agent-loading';
             
-            // Add placeholder message
             const loadingMessage: Message = {
                 id: loadingMessageId,
                 sender: 'system', 
@@ -389,23 +437,20 @@ function Chat({ isAuthReady }: ChatProps) {
             try {
                 const response = await axios.post<{ task_db_id: number, celery_task_id: string }>(
                     `/api/v1/agents/${agentId}/run`,
-                    { goal: goal } // Send goal in request body
+                    { goal: goal }
                 );
-                const { task_db_id, celery_task_id } = response.data;
+                const { task_db_id } = response.data;
                 
-                // Update placeholder message with task ID
                 setMessages(prevMessages => 
                     prevMessages.map(msg => 
                         msg.id === loadingMessageId 
                         ? { ...msg, 
-                            text: `✅ Task queued for Agent ${agentId} (ID: ${task_db_id}). Waiting for result... Goal: ${goal.substring(0, 50)}...`, 
+                            text: `✅ Task queued for Agent ${agentId} (ID: ${task_db_id}). Waiting for result via Agent WS... Goal: ${goal.substring(0, 50)}...`, 
                             agentTaskId: task_db_id,
-                            // isLoading: true, // Keep loading until WS update
                           } 
                         : msg
                     )
                 );
-                // Store mapping for WS update
                 setPendingAgentTasks(prev => ({ ...prev, [task_db_id]: loadingMessageId }));
                 
             } catch (error: any) {
@@ -413,8 +458,7 @@ function Chat({ isAuthReady }: ChatProps) {
                 const errorMsg = axios.isAxiosError(error) && error.response?.data?.detail
                                ? error.response.data.detail
                                : 'Failed to queue agent task.';
-                // Update placeholder message with error
-                 setMessages(prevMessages => 
+                setMessages(prevMessages => 
                     prevMessages.map(msg => 
                         msg.id === loadingMessageId 
                         ? { ...msg, sender: 'system', text: `Error: ${errorMsg}`, isLoading: false } 
@@ -426,17 +470,33 @@ function Chat({ isAuthReady }: ChatProps) {
         } else {
             // --- Regular Chat Handling --- 
             setIsLoading(true); // Set global loading for regular chat
-            // ... (existing non-agent chat logic using /api/v1/chat/stream or WebSocket) ...
-            // Need to reintegrate the original WebSocket chat logic here if it was removed/overwritten.
-            // Assuming original WebSocket logic was like this:
-            if (!ws.current || ws.current.readyState !== WebSocket.OPEN) {
+            
+            // Use chatWs for sending regular messages
+            if (!chatWs.current || chatWs.current.readyState !== WebSocket.OPEN) {
                  setError('WebSocket is not connected for chat. Please wait or refresh.');
-                 console.error("WebSocket not ready to send chat message.");
-                 setIsLoading(false);
-            return; 
-        }
-            // ... (rest of the original regular chat send logic) ...
-            // Make sure this part eventually sets setIsLoading(false) when the stream ends.
+                 console.error("Chat WebSocket not ready to send chat message.");
+                 setIsLoading(false); // Stop loading indicator
+                 return; 
+            }
+            
+            try {
+                // Send the message via chatWs
+                // The backend chat_websocket_handler needs to know how to process this
+                // Sending as a simple JSON for now
+                const messagePayload = JSON.stringify({ query: userMessage, stream: streamMode });
+                chatWs.current.send(messagePayload);
+                console.log("Sent message via Chat WS:", messagePayload);
+                
+                // NOTE: We are NOT setting isLoading=false here immediately.
+                // The isLoading state should be managed by the chatWs.onmessage handler 
+                // when the streaming response starts and ends.
+                // The current onmessage handler for chatWs is just a placeholder.
+                
+            } catch (sendError) {
+                 console.error("Failed to send message via Chat WebSocket:", sendError);
+                 setError("Failed to send message. Please try again.");
+                 setIsLoading(false); // Stop loading on send error
+            }
         }
     };
 

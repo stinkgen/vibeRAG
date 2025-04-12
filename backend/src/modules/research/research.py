@@ -7,6 +7,7 @@ with support for semantic search and structured JSON output.
 import logging
 import asyncio
 import json
+import uuid # Added import
 from typing import Dict, List, Any, Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session # Import Session for type hinting

@@ -37,8 +37,14 @@ class TokenData(BaseModel):
 def create_access_token(data: Dict[str, Any]) -> str:
     """Creates a JWT access token."""
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=CONFIG.auth.access_token_expire_minutes)
+    expire = datetime.utcnow() + timedelta(minutes=CONFIG.auth.access_token_expire_minutes)
     to_encode.update({"exp": expire})
+    # Ensure 'is_admin' claim is correctly populated if present in the input data
+    # The input data comes from the login function which should include the user's role/admin status
+    if "is_admin" not in to_encode:
+        logger.warning(f"'is_admin' claim missing from data provided to create_access_token: {data}. Defaulting to False in token.")
+        to_encode["is_admin"] = False # Default if missing, but login should provide it.
+        
     encoded_jwt = jwt.encode(to_encode, CONFIG.auth.secret_key, algorithm=CONFIG.auth.algorithm)
     return encoded_jwt
 

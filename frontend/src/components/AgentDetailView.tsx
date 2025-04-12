@@ -44,7 +44,7 @@ const AgentDetailView: React.FC<AgentDetailViewProps> = ({ agentId, userId, onBa
             setError(null);
             console.log(`Fetching details for agent ID: ${agentId}`);
             try {
-                const response = await axios.get<Agent>(`/api/agents/${agentId}`);
+                const response = await axios.get<Agent>(`/api/v1/agents/${agentId}`);
                 setAgent(response.data);
                 console.log('Fetched agent details:', response.data);
             } catch (err) {
@@ -70,9 +70,7 @@ const AgentDetailView: React.FC<AgentDetailViewProps> = ({ agentId, userId, onBa
         setShowTrace(true); // Show loading/error or trace when button clicked
         console.log(`Fetching latest task trace for agent ID: ${agentId}`);
         try {
-            // *** TODO: This endpoint needs to be implemented in the backend ***
-            // It should return an object like { scratchpad: ScratchpadEntry[] }
-            const response = await axios.get<{ scratchpad: ScratchpadEntry[] }>(`/api/agents/${agentId}/runs/latest`);
+            const response = await axios.get<{ scratchpad: ScratchpadEntry[] }>(`/api/v1/agents/${agentId}/runs/latest`);
             setTaskTraceData(response.data.scratchpad || []);
             console.log('Fetched task trace:', response.data);
             if (!response.data.scratchpad || response.data.scratchpad.length === 0) {

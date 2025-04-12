@@ -27,7 +27,8 @@ from src.modules.chat.history import (
     create_chat_session,
     get_chat_session,
     add_chat_message,
-    get_session_messages
+    get_session_messages,
+    get_user_chat_sessions
 )
 from src.modules.retrieval.search import semantic_search # Import semantic_search
 from src.modules.retrieval.search import google_search # Import google_search
@@ -346,151 +347,123 @@ async def get_user_from_token_ws(token: Optional[str]) -> Optional[User]:
 # --- Main WebSocket Logic --- 
 async def websocket_endpoint(websocket: WebSocket):
     """Main WebSocket endpoint for handling chat connections."""
-    token = websocket.query_params.get("token")
-    user = await get_user_from_token_ws(token)
-
-    if not user:
-        await websocket.close(code=fastapi_status.WS_1008_POLICY_VIOLATION)
-        logger.warning("WebSocket connection rejected: Invalid or missing token.")
-        return
-
+    # Accept connection first
     await websocket.accept()
-    logger.info(f"WebSocket connection accepted for user: {user.username} (ID: {user.id})")
-    active_session_id = None # Track the active session for this connection
-
+    
+    # --- Implement robust WebSocket Authentication --- #
+    user: Optional[User] = None
+    db_session_local: Optional[Session] = None
     try:
+        # Get token from cookie
+        token = websocket.cookies.get("access_token")
+        if not token:
+            await websocket.close(code=fastapi_status.WS_1008_POLICY_VIOLATION, reason="Missing auth token cookie")
+            logger.warning("Chat WS connection failed: Missing auth token cookie.")
+            return
+        
+        # Decode token (doesn't need DB yet)
+        token_data = decode_access_token(token)
+        if token_data is None or token_data.user_id is None:
+            await websocket.close(code=fastapi_status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
+            logger.warning(f"Chat WS connection failed: Invalid token data {token_data}")
+            return
+
+        # Get DB session to fetch user
+        db_session_local = SessionLocal()
+        user = get_user_by_id(db_session_local, user_id=token_data.user_id)
+        
+        if user is None or not user.is_active:
+            await websocket.close(code=fastapi_status.WS_1008_POLICY_VIOLATION, reason="User not found or inactive")
+            logger.warning(f"Chat WS connection failed: User {token_data.user_id} not found or inactive.")
+            return
+            
+        logger.info(f"Chat WS connection authenticated for user {user.id} ({user.username})")
+            
+    except Exception as auth_err:
+        logger.error(f"Chat WS authentication error: {auth_err}", exc_info=True)
+        await websocket.close(code=fastapi_status.WS_1011_INTERNAL_ERROR, reason="Authentication error")
+        if db_session_local: # Close session if opened
+             db_session_local.close()
+        return
+    # --- End Authentication --- #
+
+    # Authentication successful, proceed with chat logic
+    # Use the authenticated user and the created db_session
+    # Need to get or create a DB chat session ID here
+    db_chat_session_id: Optional[int] = None 
+    try:
+        # Try to find the most recent session for this user, or create one
+        # This logic might need refinement based on UI session handling
+        sessions = get_user_chat_sessions(db=db_session_local, user_id=user.id, limit=1)
+        if sessions:
+            db_chat_session_id = sessions[0].id
+            logger.info(f"Chat WS using existing session {db_chat_session_id} for user {user.id}")
+        else:
+            new_session = create_chat_session(db=db_session_local, user_id=user.id)
+            db_chat_session_id = new_session.id
+            logger.info(f"Chat WS created new session {db_chat_session_id} for user {user.id}")
+
+        if not db_chat_session_id:
+             raise Exception("Failed to get or create a DB chat session ID.")
+
+        # Keep connection open and handle messages
         while True:
-            if websocket.client_state != WebSocketState.CONNECTED:
-                logger.warning(f"WebSocket no longer connected for user {user.username}. Breaking loop.")
-                break
-            
-            # Define log_prefix early for use in subsequent logs
-            log_prefix = f"[WS {user.username}]"
-
-            data = await websocket.receive_text()
-            logger.debug(f"{log_prefix} Raw data received: {data}") # <<< Log raw data
-            try:
-                message = json.loads(data)
-                logger.debug(f"{log_prefix} Parsed message object: {message}") # <<< Log parsed object
-            except json.JSONDecodeError as json_err:
-                logger.error(f"{log_prefix} Failed to parse received data as JSON: {json_err}. Data: '{data}'")
-                continue # Skip processing this message
-
-            message_type = message.get("type") # Get type AFTER parsing
-            logger.debug(f"{log_prefix} Value directly from message.get('type'): {message.get('type')}") # <<< Log .get() result directly
-            logger.debug(f"{log_prefix} Dictionary right before INFO log: {message}") # <<< Log dict again
-            session_id_from_msg = message.get("session_id")
-
-            logger.info(f"{log_prefix} Received message. Type: '{message_type}', SessionID in msg: {session_id_from_msg}, ActiveSession: {active_session_id}")
-
-            # --- Handle Session Management FIRST --- 
-            session_changed_or_set = False
-            # If session ID is provided and different from active, try to switch/confirm
-            if session_id_from_msg and (active_session_id is None or active_session_id != session_id_from_msg):
-                logger.info(f"{log_prefix} Session ID {session_id_from_msg} provided, attempting switch/confirm.")
-                with SessionLocal() as db:
-                    session = get_chat_session(db, session_id_from_msg, user.id)
-                    if session:
-                        if active_session_id != session_id_from_msg:
-                             logger.info(f"{log_prefix} Switching active session from {active_session_id} to {session_id_from_msg}")
-                        else:
-                             logger.info(f"{log_prefix} Confirming initial active session {session_id_from_msg}")
-                        active_session_id = session_id_from_msg
-                        await websocket.send_json({"type": "session_confirm", "session_id": active_session_id})
-                        session_changed_or_set = True
-                    else:
-                        logger.warning(f"{log_prefix} Invalid session ID {session_id_from_msg} provided by client. Ignoring session switch.")
-                        await websocket.send_json({"type": "error", "data": f"Invalid session ID: {session_id_from_msg}"})
-                        # Decide if we should continue or process message with old session ID?
-                        # For now, let's ignore the rest of this message if session was invalid.
-                        continue 
-
-            # If no session is active AND no valid one was provided in the message, create one
-            elif active_session_id is None:
-                logger.info(f"{log_prefix} No active session and none provided/validated, creating new one.")
-                with SessionLocal() as db:
-                    new_session = create_chat_session(db, user.id, title="New Chat")
-                    active_session_id = new_session.id
-                    logger.info(f"{log_prefix} Created new session ID: {active_session_id}")
-                    await websocket.send_json({"type": "session_id", "session_id": active_session_id})
-                    session_changed_or_set = True 
-                # If we just created a session, the current message (e.g., the first query)
-                # should still be processed below using this new active_session_id.
-            
-            # --- Handle Message Content AFTER session is settled --- 
-            if not active_session_id:
-                 # This should theoretically not happen after the logic above, but safety first
-                 logger.error(f"{log_prefix} Cannot process message type '{message_type}' - no active session ID established despite checks.")
-                 await websocket.send_json({"type": "error", "data": "Cannot process request: No active session established"})
-                 continue
-
-            # Now process the actual message type using the confirmed active_session_id
-            if message_type == "query":
-                 logger.info(f"{log_prefix} Handling 'query' message for session {active_session_id}.")
-                 query_text = message.get("query", "")
-                 if not query_text:
-                     logger.warning(f"{log_prefix} Session {active_session_id}: Received empty query.")
-                     continue # Ignore empty queries
-                     
-                 # Attempt to save user message FIRST, before RAG/LLM call
-                 try:
-                     with SessionLocal() as db:
-                         add_chat_message(db, active_session_id, "user", query_text)
-                         logger.info(f"{log_prefix} Session {active_session_id}: Saved user message to DB.")
-                 except Exception as db_error:
-                     logger.error(f"{log_prefix} Session {active_session_id}: Failed to save user message to DB: {db_error}", exc_info=True)
-                     # Send error back to client and break?
-                     await websocket.send_text(json.dumps({"type": "error", "data": "Failed to save message history"}))
-                     # Don't break, maybe allow generation still?
-                     # For now, just log and send error, continue processing query
-
-                 # --- Trigger RAG + Generation --- 
-                 asyncio.create_task(
-                     chat_with_knowledge_core(
-                         websocket,
-                         SessionLocal(), # Pass a new session for the core function
-                         user,
-                         active_session_id,
-                         query=query_text,
-                         knowledge_only=message.get("knowledge_only", False),
-                         use_web=message.get("use_web", False),
-                         model=message.get("model", CONFIG.chat.model),
-                         provider=message.get("provider", CONFIG.chat.provider),
-                         temperature=message.get("temperature", CONFIG.chat.temperature),
-                         filters=message.get("filters")
-                     )
-                 )
-                 logger.info(f"{log_prefix} Session {active_session_id}: chat_with_knowledge_core task created.")
+            # Ensure DB session is available for message handling
+            if not db_session_local or not db_session_local.is_active:
+                 db_session_local = SessionLocal()
+                 logger.info("Re-established DB session for ongoing chat WS.")
                  
-            elif message_type == "set_session":
-                 # This type might be redundant if session_id is always sent with queries
-                 # Log that we received it, session was handled above.
-                 logger.info(f"{log_prefix} Received 'set_session' message type (handled by session logic above). Session is {active_session_id}")
-                 # If the session wasn't actually changed/set above (e.g., client sent same ID again)
-                 # maybe confirm it again?
-                 if not session_changed_or_set:
-                     await websocket.send_json({"type": "session_confirm", "session_id": active_session_id})
+            data = await websocket.receive_text()
+            # Parse incoming message (assuming JSON like {"query": "...", "stream": true})
+            try:
+                request_data = json.loads(data)
+                query = request_data.get("query")
+                stream = request_data.get("stream", True) # Default to streaming
+                if not query:
+                     raise ValueError("Missing 'query' in message payload")
+                 # TODO: Get knowledge_only, use_web flags from request_data if needed
+            except (json.JSONDecodeError, ValueError) as parse_error:
+                 logger.error(f"Chat WS failed to parse message: {data}, Error: {parse_error}")
+                 await websocket.send_text(json.dumps({"error": "Invalid message format"}))
+                 continue
+                 
+            logger.info(f"Chat WS received query: '{query}' for session {db_chat_session_id}")
 
-            # Add handlers for other message types if needed (e.g., clear history)
-            # Only log warning if type is not None and not handled
-            elif message_type is not None: 
-                 logger.warning(f"{log_prefix} Received unhandled message type: '{message_type}' for session {active_session_id}. Message: {message}")
-            # If message_type is None, it might have just been a keep-alive or malformed.
-            # We can ignore or log differently if needed.
-            # else: 
-            #    logger.debug(f"{log_prefix} Received message with no type for session {active_session_id}. Message: {message}")
+            try:
+                # Call the core logic function (ensure it accepts db session)
+                await chat_with_knowledge_core(
+                    websocket=websocket,
+                    db=db_session_local,
+                    user=user,
+                    session_id=db_chat_session_id,
+                    query=query,
+                    stream=stream,
+                    # Pass other parameters like knowledge_only, use_web if implemented
+                )
+                 # chat_with_knowledge_core handles sending messages/streams back
+            except Exception as core_error:
+                 logger.error(f"Error during chat core logic for session {db_chat_session_id}: {core_error}", exc_info=True)
+                 try:
+                     await websocket.send_text(json.dumps({"error": f"Processing error: {core_error}"}))
+                 except Exception as send_err:
+                     logger.error(f"Chat WS failed to send error message: {send_err}")
+                     # Connection might be dead, break loop?
+                     break
 
-    except WebSocketDisconnect as e:
-        logger.info(f"WebSocket disconnected for user: {user.username} (Session: {active_session_id}). Code: {e.code}")
+    except WebSocketDisconnect:
+        logger.info(f"Chat WebSocket disconnected for user {user.id if user else 'unknown'}, session {db_chat_session_id if db_chat_session_id else 'unknown'}.")
     except Exception as e:
-        logger.exception(f"Unexpected error in WebSocket handler for user {user.username} (Session: {active_session_id}): {e}")
-        # Attempt to close gracefully if possible
-        if websocket.client_state == WebSocketState.CONNECTED:
-             await websocket.close(code=fastapi_status.WS_1011_INTERNAL_ERROR)
+        logger.error(f"Unexpected error in Chat WebSocket handler for user {user.id if user else 'unknown'}, session {db_chat_session_id if db_chat_session_id else 'unknown'}: {e}", exc_info=True)
+        # Attempt to close gracefully on unexpected error
+        if websocket.client_state != WebSocketState.DISCONNECTED:
+             try:
+                 await websocket.close(code=fastapi_status.WS_1011_INTERNAL_ERROR)
+             except RuntimeError: pass
     finally:
-         logger.info(f"Closing WebSocket connection handler for user: {user.username} (Session: {active_session_id})")
-         # Any other cleanup specific to this connection
-         pass 
+        # Ensure DB session is closed on disconnect/error
+        if db_session_local:
+             db_session_local.close()
+             logger.info(f"Closed DB session for chat WS user {user.id if user else 'unknown'}.")
 
 # --- Helper Functions for Prompt Construction ---
 

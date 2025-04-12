@@ -13,7 +13,7 @@ from urllib.parse import parse_qs
 
 # Dependency to get current user (assuming agents are user-scoped)
 from src.modules.auth.auth import get_current_user, get_current_active_admin_user, decode_access_token, get_user_by_id # Use get_current_user
-from src.modules.auth.database import User, get_db, AgentTask as AgentTaskModel, Agent
+from src.modules.auth.database import User, get_db, AgentTaskModel, Agent
 
 # Agent CRUD functions and Pydantic models
 from .manager import (
@@ -63,6 +63,10 @@ from .schemas import AgentRunRequest, AgentTaskQueuedResponse
 # Keep others if needed for other parts of api.py?
 # from .schemas import AgentDefinitionCreate, AgentDefinitionUpdate, AgentDefinitionSchema, AgentCapabilityCreate, AgentCapabilitySchema, AgentLogSchema, AgentMemoryCreate, AgentMemorySchema, AgentOutput, AgentTaskStatusSchema, ScratchpadEntrySchema, AgentTask
 
+# Import WebSocket manager
+# from .websocket_manager import connection_manager # Removed - Manager now in app.py
+
+# Logger setup
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
@@ -576,144 +580,18 @@ def handle_get_active_tasks(
 # e.g., GET /tasks/{task_db_id}/status
 
 # --- WebSocket Connection Manager --- 
-class ConnectionManager:
-    def __init__(self):
-        # Store active connections: {user_id: {WebSocket}} - Use a set for uniqueness
-        self.active_connections: Dict[int, Set[WebSocket]] = {}
-
-    async def connect(self, websocket: WebSocket, user_id: int):
-        await websocket.accept()
-        if user_id not in self.active_connections:
-            self.active_connections[user_id] = set()
-        self.active_connections[user_id].add(websocket)
-        logger.info(f"WebSocket connected for user {user_id}. Total connections for user: {len(self.active_connections[user_id])}")
-
-    def disconnect(self, websocket: WebSocket, user_id: int):
-        if user_id in self.active_connections:
-            self.active_connections[user_id].remove(websocket)
-            logger.info(f"WebSocket disconnected for user {user_id}. Remaining connections for user: {len(self.active_connections[user_id])}")
-            # Clean up user entry if no connections left
-            if not self.active_connections[user_id]:
-                del self.active_connections[user_id]
-                logger.info(f"Removed user {user_id} from active connections.")
-        else:
-            logger.warning(f"Attempted to disconnect WebSocket for user {user_id} but user not found in active connections.")
-
-    async def send_personal_message(self, message: str, user_id: int, websocket: WebSocket):
-        """Sends a message to a specific websocket connection."""
-        try:
-            await websocket.send_text(message)
-        except Exception as e:
-            logger.error(f"Failed to send message to specific websocket for user {user_id}: {e}")
-
-    async def broadcast_to_user(self, message: str, user_id: int):
-        """Sends a message to all active websocket connections for a specific user."""
-        if user_id in self.active_connections:
-            # Create a list of tasks to send messages concurrently
-            tasks = [conn.send_text(message) for conn in self.active_connections[user_id]]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            # Log any errors that occurred during broadcast
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    ws = list(self.active_connections[user_id])[i] # Get corresponding websocket
-                    logger.error(f"Failed to broadcast to websocket {ws.client} for user {user_id}: {result}")
-        else:
-            logger.debug(f"No active WebSocket connections found for user {user_id} to broadcast message.")
-
-# Instantiate the manager (global instance)
-connection_manager = ConnectionManager()
-
-# --- Add WebSocket Endpoint --- 
-# Needs to be added after the router definition
+# MOVED TO app.py for debugging
+# class ConnectionManager:
+#    ...
+# connection_manager = ConnectionManager() # MOVED TO app.py
 
 # --- WebSocket Endpoint for Task Updates ---
-# Helper for WebSocket Auth using Cookie OR Query Parameter
-async def get_user_for_ws(websocket: WebSocket, db: Session) -> Optional[User]:
-    token = None
-    auth_source = "None"
-    # 1. Try getting token from query parameter first
-    try:
-        query_params = parse_qs(websocket.url.query)
-        token_list = query_params.get('token')
-        if token_list:
-            token = token_list[0]
-            auth_source = "Query Param"
-            logger.debug(f"WebSocket attempting auth via query parameter. Token found: {token[:10]}...")
-    except Exception as e:
-        logger.error(f"Error parsing WebSocket query parameters: {e}")
-        token = None # Ensure token is None if parsing fails
-
-    # 2. If no token from query param, try the cookie
-    if not token:
-        token = websocket.cookies.get("access_token")
-        if token:
-            auth_source = "Cookie"
-            logger.debug(f"WebSocket attempting auth via cookie. Token found: {token[:10]}...")
-
-    # 3. If still no token, fail authentication
-    if not token:
-        logger.warning("WebSocket connection attempt without access_token (checked query param and cookie).")
-        return None
-        
-    logger.info(f"WebSocket attempting validation. Source: {auth_source}, Token: {token[:10]}...")
-    # 4. Validate the token (same logic as before)
-    try:
-        token_data = decode_access_token(token)
-        logger.debug(f"Decoded token data: {token_data}") # Log decoded data
-        if token_data is None or token_data.user_id is None:
-            logger.warning(f"WebSocket connection attempt with invalid token (decode result invalid): {token_data}")
-            return None
-            
-        user_id_from_token = token_data.user_id
-        logger.debug(f"Attempting to fetch user with ID: {user_id_from_token}")
-        user = get_user_by_id(db, user_id=user_id_from_token)
-        logger.debug(f"User fetch result: {user}") # Log user fetch result
-        
-        if user is None:
-             logger.warning(f"WebSocket connection attempt: User {user_id_from_token} not found in DB.")
-             return None
-        elif not user.is_active:
-            logger.warning(f"WebSocket connection attempt: User {user_id_from_token} is inactive.")
-            return None
-            
-        logger.info(f"WebSocket successfully authenticated user {user.id} via {auth_source}.")
-        return user
-    except Exception as e:
-        logger.error(f"WebSocket token validation error ({type(e).__name__}): {e}", exc_info=True)
-        return None
-
-@router.websocket("/ws/tasks")
-async def websocket_task_updates(websocket: WebSocket): # Removed db: Session = Depends(get_db)
-    # --- Perform Authentication using Helper --- 
-    
-    # !! Need a way to get DB session here if auth helper needs it !!
-    # Temporary: Create a session manually (NOT RECOMMENDED for production)
-    db_session_local = SessionLocal()
-    try:
-        user = await get_user_for_ws(websocket, db_session_local) # Pass the manually created session
-    finally:
-        db_session_local.close() # Ensure session is closed
-        
-    if not user:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-    authenticated_user_id = user.id
-    # --- End Authentication ---
-    
-    await connection_manager.connect(websocket, authenticated_user_id)
-    try:
-        # Keep the connection alive
-        while True:
-            await asyncio.sleep(60) 
-    except WebSocketDisconnect:
-        connection_manager.disconnect(websocket, authenticated_user_id)
-        logger.info(f"WebSocket connection closed for user {authenticated_user_id}")
-    except Exception as e:
-        logger.error(f"WebSocket error for user {authenticated_user_id}: {e}", exc_info=True)
-        connection_manager.disconnect(websocket, authenticated_user_id)
-        try:
-            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
-        except RuntimeError:
-            pass # Already closed
+# MOVED TO app.py for debugging
+# async def get_user_for_ws(websocket: WebSocket) -> Optional[Dict[str, Any]]:
+#    ...
+# @router.websocket("/ws/tasks")
+# async def websocket_task_updates(websocket: WebSocket):
+#    ...
 
 # Mount this router in the main application 
+# (This happens in app.py) 

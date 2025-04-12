@@ -41,7 +41,7 @@ const UserAgentList: React.FC<UserAgentListProps> = ({ userId, onEdit, onDelete,
             
             try {
                 // API endpoint assumes user scope based on auth token
-                const response = await axios.get<Agent[]>('/api/agents/'); 
+                const response = await axios.get<Agent[]>('/api/v1/agents/'); 
                 setAgents(response.data);
                 console.log('Fetched agents:', response.data);
             } catch (err) {

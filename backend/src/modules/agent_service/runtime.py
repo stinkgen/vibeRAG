@@ -18,7 +18,7 @@ from src.modules.agent_service.manager import get_agent_definition, get_agent_ca
 from src.modules.agent_service.tools import tool_registry, ToolDefinition
 from src.modules.agent_service.logging import log_agent_activity
 from src.modules.generation.generate import generate_with_provider, GenerationError # Assuming non-streaming call is ok, or need adaptation
-from src.modules.auth.database import Agent, get_db, User, AgentTask as AgentTaskModel
+from src.modules.auth.database import Agent, get_db, User, AgentTaskModel
 from src.modules.config.config import CONFIG
 from src.modules.agent_service.memory import summarize_and_store_memory, retrieve_relevant_memories, AgentMemory
 

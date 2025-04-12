@@ -31,6 +31,10 @@ from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi import status
+from urllib.parse import parse_qs
+from typing import Set
+from src.modules.auth.auth import decode_access_token
+from src.modules.agent_service.websocket_manager import connection_manager
 
 # === In-Memory Chat History Store ===
 # WARNING: This is temporary and will be lost on backend restart.
@@ -43,7 +47,7 @@ from src.modules.generation.slides import create_presentation # Fixed import
 from src.modules.research.research import create_research_report # Corrected path
 from src.modules.vector_store.milvus_ops import connect_milvus, init_collection, delete_document, ensure_connection, update_metadata_in_vector_store, get_user_collection_name, get_admin_collection_name, get_global_collection_name, list_all_collections, drop_collection, init_rag_collection, init_agent_memory_collection # Fixed import
 from src.modules.auth.auth import get_current_user, get_current_active_admin_user, authenticate_user, create_access_token, TokenData # Remove Token import
-from src.modules.auth.database import User, get_db, UserCreate, UserUpdate, UserResponse, ChatSession, ChatSessionCreate, ChatSessionResponse, ChatSessionListResponse, AgentTask as AgentTaskModel # Import AgentTaskModel
+from src.modules.auth.database import User, get_db, UserCreate, UserUpdate, UserResponse, ChatSession, ChatSessionCreate, ChatSessionResponse, ChatSessionListResponse, AgentTaskModel # Import AgentTaskModel
 from src.modules.agent_service.schemas import AgentTaskQueuedResponse # Import response model
 from src.modules.agent_service.tasks import execute_agent_task # Import celery task
 from src.modules.config.config import CONFIG, ChatConfig, OllamaConfig, OpenAIConfig, MilvusConfig, EmbeddingConfig, IngestionConfig, PresentationConfig, ResearchConfig, WebSearchConfig, SearchConfig, AuthConfig
@@ -108,6 +112,9 @@ from src.modules.auth.database import Agent # Import SQLAlchemy Agent model from
 from src.modules.agent_service.models import AgentTask # Keep Pydantic AgentTask import from agent_service/models.py
 from src.modules.agent_service.schemas import ScratchpadEntrySchema
 
+# Import the agent router for its HTTP endpoints
+from src.modules.agent_service.api import router as agents_router 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize connections, collections, and database on startup."""
@@ -157,16 +164,19 @@ app = FastAPI(
 )
 logger.info("FastAPI app instance created.")
 
-# --- Main API Router (Now without global dependency) ---
-api_router = APIRouter()
+# --- Define Routers --- #
+auth_router = APIRouter() # Define the auth router locally
+api_router = APIRouter()  # Define the main API router locally
 
 # Enable CORS for frontend
+# Using wildcard origin with allow_credentials=True is problematic.
+# Restrict origin to the actual frontend URL.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000"], # Specific origin
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"], # Allow all standard methods
+    allow_headers=["*"], # Allow all standard headers
 )
 
 # Constants
@@ -275,17 +285,17 @@ class MetadataUpdateRequest(BaseModel):
     tags: Optional[List[str]] = None
     metadata: Optional[Dict[str, Any]] = None
 
-# --- Authentication Router (Remains unprotected) ---
-auth_router = APIRouter()
+# === Authentication Endpoints (Defined on auth_router) ===
 
-# --- Pydantic Model for Auth Token Response --- (Defined here)
+# --- Pydantic Model for Auth Token Response --- #
 class Token(BaseModel):
     access_token: str
     token_type: str
 
-@auth_router.post("/auth/login", response_model=Token)
+# --- Login Endpoint --- #
+@auth_router.post("/auth/login", response_model=Token) # Route uses locally defined auth_router
 def login_for_access_token(
-    response: Response, # Inject Response object
+    response: Response, 
     form_data: OAuth2PasswordRequestForm = Depends(), 
     db: Session = Depends(get_db)
 ):
@@ -296,27 +306,29 @@ def login_for_access_token(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    # Ensure user is active before creating token
     if not user.is_active:
          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
          
-    access_token = create_access_token(
-        data={"sub": user.username, "role": user.role, "id": user.id} # Pass data payload only
-    )
-
-    # Set the cookie
+    access_token_data = {
+        "sub": user.username, 
+        "role": user.role, 
+        "id": user.id,
+        "is_admin": user.is_admin
+    }
+    access_token = create_access_token(data=access_token_data)
     response.set_cookie(
         key="access_token",
         value=access_token,
-        httponly=True, # Essential for security
-        secure=CONFIG.auth.secure_cookie, # Use secure=True in production (HTTPS)
-        samesite="strict", # Or 'lax' depending on needs
-        max_age=CONFIG.auth.access_token_expire_minutes * 60 # In seconds
+        httponly=True, 
+        secure=CONFIG.auth.secure_cookie, 
+        samesite="strict", 
+        max_age=CONFIG.auth.access_token_expire_minutes * 60
     )
-
-    # Return token in body as well for compatibility
     return {"access_token": access_token, "token_type": "bearer"}
 
+# === API Endpoints (Defined on api_router) ===
+
+# --- User Endpoints --- #
 @api_router.get("/users/me", response_model=UserResponse)
 async def read_users_me(current_user: User = Depends(get_current_user)):
     """Get current logged-in user info."""
@@ -469,10 +481,10 @@ def health_check():
 async def get_app_config():
     """Returns the current application configuration."""
     # Need to carefully select what parts of the config are safe to expose
-    # Use .model_dump() for Pydantic v2 compatibility
+    # Use .model_dump() for Pydantic v2
     logger.debug(f"Attempting to return config model_dump()") 
     try:
-        config_dict = CONFIG.model_dump() # Use model_dump() for Pydantic v2
+        config_dict = CONFIG.model_dump() # Use model_dump()
         logger.debug(f"Successfully created config dump: {config_dict}")
         return config_dict
     except Exception as e:
@@ -1048,55 +1060,120 @@ async def get_openai_models():
             detail=f"Unexpected error processing OpenAI models request: {str(e)}"
         )
 
-@api_router.websocket("/ws/chat")
-async def websocket_endpoint_route(websocket: WebSocket):
-    """Route WebSocket connections to the handler. AUTHENTICATION MUST BE HANDLED WITHIN THE HANDLER."""
-    await chat_websocket_handler(websocket) # Call the imported handler
+# === START: WebSocket Connection Manager and Endpoint ===
+# ConnectionManager class and instance are now in websocket_manager.py
 
-# Types locked—code's sharp as fuck! 🔥
-
-# Include the routers
-app.include_router(auth_router, prefix="/api/v1", tags=["Auth"]) # Add tag
-app.include_router(api_router, prefix="/api/v1", tags=["API"]) # Add tag
-logger.info("API routers included.")
-
-# --- Endpoint to Create Initial Collections (Admin Only, Optional) ---
-# Could be called manually or during app startup for admin/global
-@api_router.post("/admin/init-collections", status_code=201, dependencies=[Depends(get_current_active_admin_user)])
-def init_core_collections():
-    """Ensures the global and admin collections exist."""
+# Helper function remains here as it uses decode_access_token from auth module
+async def get_user_for_ws(websocket: WebSocket) -> Optional[Dict[str, Any]]: # No DB Session needed
+    token = None
+    auth_source = "None"
+    # 1. Try getting token from query parameter first
     try:
-        admin_coll = get_admin_collection_name()
-        global_coll = get_global_collection_name()
-        init_collection(admin_coll)
-        init_collection(global_coll)
-        logger.info(f"Ensured core collections exist: {admin_coll}, {global_coll}")
-        return {"message": f"Core collections '{admin_coll}' and '{global_coll}' initialized."}
+        query_params = parse_qs(websocket.url.query)
+        token_list = query_params.get('token')
+        if token_list:
+            token = token_list[0]
+            auth_source = "Query Param"
+            logger.debug(f"App WS Auth: Found token in query param: {token[:10]}...")
     except Exception as e:
-        logger.error(f"Failed to initialize core collections: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to initialize core Milvus collections.")
+        logger.error(f"App WS Auth: Error parsing WebSocket query parameters: {e}")
+        token = None
 
-# Routers from different modules
-# from src.modules.chat.api import router as chat_router # Removed
-# from src.modules.documents.api import router as documents_router # Removed
-# from src.modules.config.api import router as config_router # Removed
-# from src.modules.auth.api import router as auth_router # Removed
-# from src.modules.users.api import router as users_router # Removed
-# from src.modules.sessions.api import router as sessions_router # Removed
-# Import the new agent router
-from src.modules.agent_service.api import router as agents_router 
+    # 2. If no token from query param, try the cookie
+    if not token:
+        token = websocket.cookies.get("access_token")
+        if token:
+            auth_source = "Cookie"
+            logger.debug(f"App WS Auth: Found token in cookie: {token[:10]}...")
 
+    # 3. If still no token, fail authentication
+    if not token:
+        logger.warning("App WS Auth: Connection attempt without token (checked query param and cookie).")
+        return None
+        
+    logger.info(f"App WS Auth: Attempting validation. Source: {auth_source}, Token: {token[:10]}...")
+    # 4. Validate the token (JUST DECODE, NO DB CHECK)
+    try:
+        token_data = decode_access_token(token)
+        logger.debug(f"App WS Auth: Decoded token data: {token_data}")
+        if token_data is None or token_data.user_id is None:
+            logger.warning(f"App WS Auth: Invalid token data (decode result invalid): {token_data}")
+            return None
+        
+        logger.info(f"App WS Auth: Successfully decoded token for user {token_data.user_id} via {auth_source}.")
+        return token_data.model_dump() # Return dict representation
+        
+    except Exception as e:
+        logger.error(f"App WS Auth: Token validation error ({type(e).__name__}): {e}", exc_info=True)
+        return None
 
-# Mount routers
-# api_router.include_router(chat_router) # Removed
-# api_router.include_router(documents_router) # Removed
-# api_router.include_router(config_router) # Removed
-# api_router.include_router(auth_router) # Removed
-# api_router.include_router(users_router) # Removed
-# api_router.include_router(sessions_router) # Removed
-api_router.include_router(agents_router) # Mount the new agent router
+# Mount the WebSocket endpoint directly on the app instance
+@app.websocket("/api/v1/agents/ws/tasks")
+async def websocket_task_updates_app_route(websocket: WebSocket): # Renamed function slightly
+    logger.info("Entered app-level websocket_task_updates endpoint.") 
+    # --- Perform Authentication (Decode Only) --- 
+    token_payload = None
+    try:
+        logger.debug("App WS: Calling get_user_for_ws...")
+        token_payload = await get_user_for_ws(websocket) 
+        logger.debug(f"App WS: get_user_for_ws returned: {token_payload}")
+    except Exception as auth_err:
+         logger.error(f"App WS: Unexpected error calling get_user_for_ws: {auth_err}", exc_info=True)
+         await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+         return
+        
+    if not token_payload:
+        logger.warning(f"App WS: Closing WebSocket due to failed token decode/validation (token_payload is None).")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+        
+    # Use the correct key from the decoded token payload
+    authenticated_user_id = token_payload.get("user_id") # Corrected key: id -> user_id
+    if not authenticated_user_id:
+         logger.error(f"App WS: Closing WebSocket - Decoded token missing 'user_id': {token_payload}") # Updated log message
+         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+         return
+         
+    logger.info(f"App WS: Connection accepted for user ID: {authenticated_user_id}. Proceeding to connect manager.")
+    # --- End Authentication ---
+    
+    try:
+        await connection_manager.connect(websocket, authenticated_user_id)
+    except Exception as connect_err:
+        logger.error(f"App WS: Error during connection_manager.connect: {connect_err}", exc_info=True)
+        try:
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+        except RuntimeError: pass 
+        return 
+        
+    # --- Main Connection Loop ---    
+    try:
+        while True:
+            await asyncio.sleep(60) 
+            if websocket.client_state == WebSocketState.DISCONNECTED:
+                logger.info(f"App WS: User {authenticated_user_id} detected disconnect during sleep.")
+                break 
+    except WebSocketDisconnect:
+        logger.info(f"App WS: WebSocketDisconnect exception caught for user {authenticated_user_id}.")
+    except Exception as e:
+        logger.error(f"App WS: Error during main loop for user {authenticated_user_id}: {e}", exc_info=True)
+    finally:
+        connection_manager.disconnect(websocket, authenticated_user_id)
+        logger.info(f"App WS: Cleanup completed for user {authenticated_user_id}.")
 
-app.include_router(api_router)
+# === END: WebSocket Code Moved from agent_service/api.py ===
+
+# Include endpoint routers
+app.include_router(auth_router, prefix="/api/v1", tags=["Authentication"]) 
+logger.info("Auth router included at /api/v1.")
+
+# Include Agent router in the main API router (prefix /api/v1/agents)
+api_router.include_router(agents_router)
+logger.info("Agent Service router included in api_router.")
+
+# Mount the main API router under /api/v1
+app.include_router(api_router, prefix="/api/v1", tags=["API"])
+logger.info("Main API router included at /api/v1.")
 
 # === Agent Task Run Endpoints ===
 
@@ -1120,9 +1197,9 @@ def get_latest_agent_run(
     # if not agent or (agent.owner_user_id != current_user.id and not current_user.is_admin):
     #     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found or not authorized")
 
-    latest_task = db.query(AgentTask)\
-                    .filter(AgentTask.agent_id == agent_id)\
-                    .order_by(AgentTask.created_at.desc())\
+    latest_task = db.query(AgentTaskModel)\
+                    .filter(AgentTaskModel.agent_id == agent_id)\
+                    .order_by(AgentTaskModel.created_at.desc())\
                     .first()
 
     if not latest_task:
@@ -1137,8 +1214,8 @@ def get_latest_agent_run(
     # scratchpad_data = json.loads(latest_task.scratchpad) if isinstance(latest_task.scratchpad, str) else latest_task.scratchpad
 
     # Assuming direct access works and matches ScratchpadEntrySchema structure
-    # The type hint in AgentTask model for scratchpad should guide this.
-    # If AgentTask.scratchpad is List[Dict[str, Any]] or similar, this is likely fine.
+    # The type hint in AgentTaskModel model for scratchpad should guide this.
+    # If AgentTaskModel.scratchpad is List[Dict[str, Any]] or similar, this is likely fine.
     scratchpad_data = latest_task.scratchpad or []
 
     # Validate/parse with Pydantic schema if necessary (depends on how scratchpad is stored)
@@ -1151,9 +1228,15 @@ def get_latest_agent_run(
         timestamp=latest_task.created_at.isoformat() if latest_task.created_at else None
     )
 
-
-# === Chat History Endpoints ===
-# ... rest of the file ...
+# === Chat WebSocket Endpoint (Moved to App Level) --- #
+@app.websocket("/api/v1/ws/chat") # Changed from @api_router to @app
+async def websocket_endpoint_route_app_level(websocket: WebSocket): # Renamed slightly
+    """Route WebSocket connections for interactive chat to the handler.
+    AUTHENTICATION MUST BE HANDLED WITHIN THE HANDLER.
+    """
+    logger.info("Routing incoming WebSocket connection directly to chat_websocket_handler.")
+    # chat_websocket_handler is imported from generation.generate
+    await chat_websocket_handler(websocket) 
 
 if __name__ == "__main__":
     port = int(os.getenv("BACKEND_PORT", 8000))

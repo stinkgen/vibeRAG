@@ -55,8 +55,8 @@ const LogExplorer: React.FC<LogExplorerProps> = ({ agentId, userId }) => {
             params.append('limit', limit.toString());
             params.append('skip', skip.toString());
             
-            // Assuming endpoint is /api/agents/logs/ based on previous work
-            const response = await axios.get<AgentLog[]>('/api/agents/logs/', { params });
+            // Assuming endpoint is /api/v1/agents/logs/ now
+            const response = await axios.get<AgentLog[]>('/api/v1/agents/logs/', { params });
             setLogs(response.data);
             console.log('Fetched logs:', response.data);
         } catch (err) {

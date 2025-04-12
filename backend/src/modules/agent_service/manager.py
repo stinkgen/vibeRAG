@@ -13,26 +13,39 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import desc # For ordering logs
 from datetime import datetime # For time filtering
 
-from src.modules.auth.database import Agent, AgentCapability, AgentLog, AgentCreate, AgentUpdate, User, get_db, AgentTask
+from src.modules.auth.database import Agent, AgentCapability, AgentLog, AgentCreate, AgentUpdate, User, get_db, AgentTaskModel
 # Import AgentResponse if needed from auth.database or agent_service.models
 from src.modules.auth.database import AgentResponse
+from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
 # --- Agent Definition CRUD --- 
 
-def create_agent_definition(db: Session, agent: AgentCreate, owner: User) -> Agent:
+def create_agent_definition(db: Session, agent: AgentCreate, owner: User) -> AgentResponse:
     """Creates a new agent definition in the database."""
-    # Basic validation or default setting could happen here
+    # Convert Pydantic model to dictionary, ensuring owner_user_id is NOT included if already present
+    agent_data = agent.model_dump(exclude_unset=True)
+    # Explicitly remove owner_user_id from the dict if it exists to avoid duplication
+    if 'owner_user_id' in agent_data:
+         del agent_data['owner_user_id']
+         
+    logger.debug(f"Creating agent DB object with data: {agent_data} for owner ID: {owner.id}")
     db_agent = Agent(
-        **agent.model_dump(exclude_unset=True), # Use Pydantic v2 model_dump
-        owner_user_id=owner.id # Ensure owner is set correctly
+        owner_user_id=owner.id, # Set owner explicitly
+        **agent_data # Unpack the rest of the data
     )
     db.add(db_agent)
-    db.commit()
-    db.refresh(db_agent)
-    logger.info(f"Created agent definition '{db_agent.name}' (ID: {db_agent.id}) for user {owner.username}.")
-    return db_agent
+    try:
+        db.commit()
+        db.refresh(db_agent)
+        logger.info(f"Successfully created agent '{db_agent.name}' (ID: {db_agent.id}) for user {owner.username}")
+        return AgentResponse.model_validate(db_agent) # Use model_validate for Pydantic v2
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Database error creating agent for user {owner.username}: {e}", exc_info=True)
+        # Consider raising a specific DB error or returning None/raising HTTP exception from caller
+        raise HTTPException(status_code=500, detail="Database error creating agent")
 
 def get_agent_definition(db: Session, agent_id: int, user_id: int) -> Optional[Agent]:
     """Gets a specific agent definition by ID, ensuring user ownership."""
@@ -246,11 +259,11 @@ def delete_agent_definition_admin(db: Session, agent_id: int) -> Optional[Agent]
 
 # --- Agent Task Management ---
 
-def get_active_tasks(db: Session, user_id: Optional[int] = None) -> List[AgentTask]:
+def get_active_tasks(db: Session, user_id: Optional[int] = None) -> List[AgentTaskModel]:
     """Retrieves tasks currently in the 'running' state.
     If user_id is provided, filters for tasks owned by that user.
     """
-    query = db.query(AgentTask).filter(AgentTask.status == 'running')
+    query = db.query(AgentTaskModel).filter(AgentTaskModel.status == 'running')
     if user_id is not None:
-        query = query.filter(AgentTask.user_id == user_id)
-    return query.order_by(AgentTask.created_at.asc()).all()
+        query = query.filter(AgentTaskModel.user_id == user_id)
+    return query.order_by(AgentTaskModel.created_at.asc()).all()

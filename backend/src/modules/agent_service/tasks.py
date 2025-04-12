@@ -3,15 +3,16 @@ import logging
 import json
 import traceback # For detailed error logging
 from typing import Dict, Any # Import necessary types
+import asyncio # For running async broadcast in sync task if needed
 
 from src.celery_app import celery_app # Import the celery app instance
-from src.modules.auth.database import SessionLocal, AgentTask as AgentTaskModel, User, Agent
+from src.modules.auth.database import SessionLocal, AgentTaskModel, User, Agent # Correct import
 from src.modules.agent_service.models import AgentTask as AgentTaskSchema, AgentOutput # Pydantic schemas
 from src.modules.agent_service import runtime # Import the original runtime logic
 from src.modules.auth.auth import get_user_by_id # Correct import path
 # Import the connection manager
-from src.modules.agent_service.api import connection_manager 
-import asyncio # For running async broadcast in sync task if needed
+from src.modules.agent_service.websocket_manager import connection_manager # Import from new location
+from src.modules.agent_service.schemas import AgentTaskUpdatePayload, AgentFinalOutput # Import schemas
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ async def execute_agent_task(self, agent_task_data: Dict[str, Any]):
 
         # --- Update Task Status to Running --- 
         task.status = "running"
+        task.started_at = datetime.utcnow()
         db.commit()
         logger.info(f"AgentTask {task_db_id} status set to running.")
         # Celery task state update (optional)
@@ -75,9 +77,10 @@ async def execute_agent_task(self, agent_task_data: Dict[str, Any]):
             final_output: AgentOutput = await runtime.run_agent_task_logic(task=task, owner=owner_user, db=db)
             
             # --- Update Task Status to Completed --- 
-            task.status = "completed"
+            task.status = final_output.status
+            task.completed_at = datetime.utcnow()
             task.result_data = final_output.model_dump() # Store result as JSON
-            task.error_message = None
+            task.error_message = final_output.error
             db.commit()
             logger.info(f"AgentTask {task_db_id} completed successfully.")
             # Return result for Celery backend (optional)
