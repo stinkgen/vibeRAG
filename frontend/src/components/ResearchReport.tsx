@@ -1,10 +1,14 @@
-import React, { useState } from 'react';
-import axios from 'axios';
+import React, { useState, useEffect, useCallback } from 'react';
+import axios, { AxiosError } from 'axios';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import styles from './ResearchReport.module.css';
 import API_ENDPOINTS from '../config/api';
+import { useModelProviderSelection } from '../hooks/useModelProviderSelection';
+import { ModelSelector } from './ModelSelector';
 
 // Research vibes strong—knowledge report FTW!
-interface ResearchReport {
+interface ResearchReportData {
   title: string;
   summary: string;
   insights: string[];
@@ -13,44 +17,79 @@ interface ResearchReport {
 }
 
 interface ResearchResponse {
-  report: ResearchReport;
+  report: ResearchReportData;
 }
 
-const ResearchReportViewer: React.FC = () => {
-  const [query, setQuery] = useState('');
-  const [useWeb, setUseWeb] = useState(true);
-  const [report, setReport] = useState<ResearchReport | null>(null);
+// Define component props
+interface ResearchReportProps {
+  isAuthReady: boolean;
+}
+
+const ResearchReportViewer: React.FC<ResearchReportProps> = ({ isAuthReady }) => {
+  const [query, setQuery] = useState<string>('');
+  const [useWeb, setUseWeb] = useState<boolean>(false);
+  const [useKnowledge, setUseKnowledge] = useState<boolean>(true);
+  const [report, setReport] = useState<ResearchReportData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Use the hook for model/provider selection, passing isAuthReady
+  const {
+    currentModel,
+    setCurrentModel,
+    currentProvider,
+    setCurrentProvider,
+    ollamaModels,
+    openaiModels,
+    loadingStatus: modelLoadingStatus,
+    ollamaStatus,
+    providerError: modelProviderError
+  } = useModelProviderSelection(isAuthReady);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!query.trim()) {
+      setError('Please enter a research query.');
+      return;
+    }
     setLoading(true);
     setError(null);
     setReport(null);
-    
+
     try {
-      // Call research endpoint
       const { data } = await axios.post<ResearchResponse>(API_ENDPOINTS.RESEARCH, {
         query: query,
-        use_web: useWeb
+        use_web: useWeb,
+        use_knowledge: useKnowledge,
+        model: currentModel,
+        provider: currentProvider
       });
-      
+
       setReport(data.report);
-    } catch (error) {
-      console.error('Research generation failed:', error);
-      setError('Failed to generate research report. Please try again.');
+    } catch (err: any) {
+      console.error('Research generation failed:', err);
+      if (axios.isAxiosError(err) && err.response?.data?.detail) {
+        setError(err.response.data.detail);
+      } else if (axios.isAxiosError(err) && err.message) {
+        setError(err.message);
+      } else {
+        setError("An unexpected error occurred during research generation.");
+      }
     } finally {
       setLoading(false);
     }
   };
 
   const handleSourceClick = (source: string) => {
-    // Extract filename from source string
-    const pdfFilename = source.split('/').pop() || '';
-    
-    // Open the PDF in a new tab
-    window.open(API_ENDPOINTS.GET_DOCUMENT(pdfFilename), '_blank');
+    const pdfFilename = source;
+    try {
+      const pdfUrl = API_ENDPOINTS.GET_DOCUMENT(pdfFilename);
+      console.log("Attempting to open PDF source:", pdfUrl);
+      window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+    } catch (error: any) {
+      console.error('Failed to open PDF source:', error);
+      setError(error.response?.data?.detail || error.message || 'Could not open PDF source.');
+    }
   };
 
   return (
@@ -76,26 +115,41 @@ const ResearchReportViewer: React.FC = () => {
           <textarea
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="What should we research? (e.g., 'AI and Machine Learning')"
+            placeholder="What should we research?"
             className={styles.textarea}
-            rows={4}
+            rows={3}
+            required
           />
         </div>
         
-        <div className={styles.toggleGroup}>
-          <label className={styles.toggle}>
-            <input
-              type="checkbox"
-              checked={useWeb}
-              onChange={(e) => setUseWeb(e.target.checked)}
-            />
-            <span className={styles.toggleLabel}>Include Web Research</span>
-          </label>
+        <div className={styles.controlsRow}>
+          <div className={styles.toggleGroup}>
+            <label className={styles.toggle}>
+              <input
+                type="checkbox"
+                checked={useWeb}
+                onChange={(e) => setUseWeb(e.target.checked)}
+              />
+              <span className={styles.toggleLabel}>Web Search</span>
+            </label>
+            <label className={styles.toggle}>
+              <input
+                type="checkbox"
+                checked={useKnowledge}
+                onChange={(e) => setUseKnowledge(e.target.checked)}
+              />
+              <span className={styles.toggleLabel}>Knowledge Base</span>
+            </label>
+          </div>
+
+          <ModelSelector 
+            isAuthReady={isAuthReady}
+          />
+
+          <button type="submit" className={styles.button} disabled={loading || !query.trim() || modelLoadingStatus}>
+            {loading ? 'Researching...' : 'Generate Report'}
+          </button>
         </div>
-        
-        <button type="submit" className={styles.button} disabled={loading}>
-          {loading ? 'Researching...' : 'Start Research 🚀'}
-        </button>
       </form>
 
       {error && (
@@ -113,9 +167,7 @@ const ResearchReportViewer: React.FC = () => {
           <section className={styles.section}>
             <h2>Executive Summary</h2>
             <div className={styles.content}>
-              {report.summary.split('\n').map((paragraph, i) => (
-                <p key={i}>{paragraph}</p>
-              ))}
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.summary}</ReactMarkdown>
             </div>
           </section>
           
@@ -126,7 +178,7 @@ const ResearchReportViewer: React.FC = () => {
               {report.insights.map((insight, i) => (
                 <li key={i}>
                   <span className={styles.insightNumber}>{i + 1}</span>
-                  {insight}
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{insight}</ReactMarkdown>
                 </li>
               ))}
             </ul>
@@ -136,16 +188,14 @@ const ResearchReportViewer: React.FC = () => {
           <section className={styles.section}>
             <h2>Detailed Analysis</h2>
             <div className={styles.analysis}>
-              {report.analysis.split('\n').map((paragraph, i) => (
-                paragraph.trim() && <p key={i}>{paragraph}</p>
-              ))}
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.analysis}</ReactMarkdown>
             </div>
           </section>
           
           {/* Sources Section */}
           <section className={styles.section}>
             <h2>Sources</h2>
-            <div className={styles.sourceNote}>Click sources to view documents 📚</div>
+            <div className={styles.sourceNote}>Click source filename to view document</div>
             <ul className={styles.sources}>
               {report.sources.map((source, i) => (
                 <li key={i}>

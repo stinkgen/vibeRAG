@@ -3,14 +3,26 @@ import torch
 from typing import Dict, Any
 import os
 from dotenv import load_dotenv
+import secrets # Import secrets for generating JWT secret
 
 # Load environment variables
 load_dotenv()
 
+# --- JWT Configuration ---
+# Generate a default secret if not provided in .env
+# WARNING: In production, ALWAYS set a strong JWT_SECRET_KEY in your .env file!
+DEFAULT_JWT_SECRET = secrets.token_urlsafe(32)
+
+@dataclass
+class AuthConfig:
+    secret_key: str = os.getenv("JWT_SECRET_KEY", DEFAULT_JWT_SECRET)
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60 * 24)) # Default 1 day
+
 @dataclass
 class SearchConfig:
     default_limit: int = 5
-    min_score: float = 0.5
+    min_score: float = 1.5
 
 @dataclass
 class ResearchConfig:
@@ -89,7 +101,12 @@ class ChatConfig:
     model: str = os.getenv("CHAT_MODEL", "llama3")
     provider: str = os.getenv("CHAT_PROVIDER", "ollama")
     temperature: float = float(os.getenv("CHAT_TEMPERATURE", "0.7"))
-    chunks_limit: int = int(os.getenv("CHAT_CHUNKS_LIMIT", "5"))  # Maximum number of chunks to retrieve for chat
+    chunks_limit: int = int(os.getenv("CHAT_CHUNKS_LIMIT", "5"))
+    history_limit: int = int(os.getenv("CHAT_HISTORY_LIMIT", "10"))
+    system_prompt: str = os.getenv(
+        "CHAT_SYSTEM_PROMPT", 
+        "You are a helpful AI assistant. Use the provided context to answer the user's query accurately. If the context doesn't contain the answer, state that clearly."
+    )
 
 @dataclass
 class EmbeddingConfig:
@@ -104,6 +121,7 @@ class OpenAIConfig:
     api_key: str = os.getenv("OPENAI_API_KEY", "")  # Set via environment variable
     base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     default_model: str = os.getenv("CHAT_MODEL", "gpt-4")
+    max_tokens: int = int(os.getenv("OPENAI_MAX_TOKENS", 4096)) # Reverted to 4k as upper bound
 
 @dataclass
 class IngestionConfig:
@@ -124,6 +142,7 @@ class PresentationConfig:
 @dataclass
 class Config:
     """Global configuration."""
+    auth: AuthConfig = field(default_factory=AuthConfig)
     chat: ChatConfig = field(default_factory=ChatConfig)
     research: ResearchConfig = field(default_factory=ResearchConfig)
     presentation: PresentationConfig = field(default_factory=PresentationConfig)

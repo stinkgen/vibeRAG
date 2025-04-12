@@ -64,44 +64,8 @@ def ensure_connection():
         logger.error(f"Failed to ensure Milvus connection: {str(e)}")
         raise
 
-def init_collection(recreate: bool = False) -> Collection:
-    """Initialize the chunks collection with all the bells and whistles.
-    
-    Args:
-        recreate: If True, drop existing collection and create new one
-        
-    Returns:
-        Collection: The initialized Milvus collection
-    """
-    # Ensure connection first
-    ensure_connection()
-    
-    if utility.has_collection(CONFIG.milvus.collection_name):
-        if recreate:
-            utility.drop_collection(CONFIG.milvus.collection_name)
-            logger.info(f"Dropped existing collection: {CONFIG.milvus.collection_name}")
-        else:
-            logger.info(f"Collection {CONFIG.milvus.collection_name} already exists, loading it up")
-            collection = Collection(CONFIG.milvus.collection_name)
-            
-            # Check if index exists, create if not
-            try:
-                index_info = collection.index().params
-                logger.info("Index already exists")
-            except Exception:
-                logger.info("Creating index for existing collection")
-                index = {
-                    "index_type": CONFIG.milvus.index_params["index_type"],
-                    "metric_type": CONFIG.milvus.index_params["metric_type"],
-                    "params": CONFIG.milvus.index_params["params"]
-                }
-                collection.create_index(CONFIG.milvus.embedding_field, index)
-                logger.info(f"Created index on {CONFIG.milvus.embedding_field} field")
-            
-            collection.load()
-            return collection
-    
-    # Create fields
+def get_collection_schema() -> CollectionSchema:
+    """Creates the collection schema based on config."""
     fields = [
         FieldSchema(
             name=CONFIG.milvus.chunk_id_field,
@@ -140,38 +104,122 @@ def init_collection(recreate: bool = False) -> Collection:
             dtype=DataType.VARCHAR,
             max_length=CONFIG.milvus.field_params[CONFIG.milvus.filename_field]['max_length']
         ),
-        FieldSchema(
-            name='category',
-            dtype=DataType.VARCHAR,
-            max_length=CONFIG.milvus.field_params['category']['max_length']
-        )
+        # Add category field if defined in config, otherwise skip
+        *([] if 'category' not in CONFIG.milvus.field_params else [
+            FieldSchema(
+                name='category',
+                dtype=DataType.VARCHAR,
+                max_length=CONFIG.milvus.field_params['category']['max_length']
+            )
+        ])
     ]
-    
-    # Create schema
-    schema = CollectionSchema(fields=fields)
-    
-    # Create collection
-    collection = Collection(CONFIG.milvus.collection_name, schema=schema)
-    
-    # Create index on the embedding field
-    index = {
-        "index_type": CONFIG.milvus.index_params["index_type"],
-        "metric_type": CONFIG.milvus.index_params["metric_type"],
-        "params": CONFIG.milvus.index_params["params"]
-    }
-    collection.create_index(CONFIG.milvus.embedding_field, index)
-    logger.info(f"Created index on {CONFIG.milvus.embedding_field} field")
-    
-    # Load the collection into memory
-    collection.load()
-    logger.info(f"Collection {CONFIG.milvus.collection_name} loaded into memory")
-    
-    return collection
+    return CollectionSchema(fields=fields, description="Document Chunks Collection")
 
-def store_with_metadata(chunks: List[Dict], tags: List[str] = None, metadata: Dict = None, filename: str = None) -> List[str]:
-    """Store chunks with metadata in Milvus.
+def create_collection_index(collection: Collection):
+    """Creates the HNSW index on the embedding field."""
+    try:
+        if not collection.has_index():
+            logger.info(f"Creating index for collection '{collection.name}'...")
+            index_params = {
+                "index_type": CONFIG.milvus.index_params["index_type"],
+                "metric_type": CONFIG.milvus.index_params["metric_type"],
+                "params": CONFIG.milvus.index_params["params"]
+            }
+            collection.create_index(CONFIG.milvus.embedding_field, index_params)
+            logger.info(f"Created index on field '{CONFIG.milvus.embedding_field}' for collection '{collection.name}'.")
+        else:
+            logger.info(f"Index already exists for collection '{collection.name}'.")
+    except Exception as e:
+        logger.error(f"Failed to create or check index for collection '{collection.name}': {e}", exc_info=True)
+        # Decide if this should raise an error
+
+def init_collection(collection_name: str, recreate: bool = False) -> Collection:
+    """Initialize or load a specific Milvus collection.
+
+    Args:
+        collection_name: The name of the collection to initialize/load.
+        recreate: If True, drop existing collection and create new one.
+
+    Returns:
+        Collection: The initialized Milvus collection.
+    """
+    ensure_connection()
+    
+    collection_exists = utility.has_collection(collection_name)
+
+    if collection_exists:
+        if recreate:
+            logger.warning(f"Dropping existing collection: {collection_name}")
+            utility.drop_collection(collection_name)
+            collection_exists = False # Reset flag as it's dropped
+        else:
+            logger.info(f"Collection '{collection_name}' already exists, loading it.")
+            collection = Collection(collection_name)
+            create_collection_index(collection) # Ensure index exists
+            collection.load() # Load into memory
+            logger.info(f"Collection '{collection_name}' loaded.")
+            return collection
+
+    # If collection doesn't exist or was dropped
+    if not collection_exists:
+        logger.info(f"Creating new collection: '{collection_name}'")
+        schema = get_collection_schema()
+        collection = Collection(name=collection_name, schema=schema, consistency_level=CONFIG.milvus.consistency_level)
+        logger.info(f"Collection '{collection_name}' created.")
+        create_collection_index(collection) # Create index
+        collection.load() # Load into memory
+        logger.info(f"Collection '{collection_name}' loaded.")
+        return collection
+
+    # This part should ideally not be reached, but return collection if it exists somehow
+    return Collection(collection_name)
+
+# --- Add Collection Management Functions ---
+
+def list_all_collections() -> List[str]:
+    """Lists all collections in Milvus."""
+    ensure_connection()
+    try:
+        return utility.list_collections()
+    except Exception as e:
+        logger.error(f"Failed to list Milvus collections: {e}")
+        return []
+
+def drop_collection(collection_name: str) -> bool:
+    """Drops a specific collection."""
+    ensure_connection()
+    try:
+        if utility.has_collection(collection_name):
+            utility.drop_collection(collection_name)
+            logger.info(f"Successfully dropped collection: {collection_name}")
+            return True
+        else:
+            logger.warning(f"Collection '{collection_name}' does not exist, cannot drop.")
+            return False
+    except Exception as e:
+        logger.error(f"Failed to drop collection '{collection_name}': {e}")
+        return False
+
+def get_user_collection_name(user_id: int) -> str:
+    """Generates the collection name for a given user ID."""
+    # Use a consistent prefix and the user's ID
+    return f"user_{user_id}"
+
+def get_admin_collection_name() -> str:
+    """Gets the name for the admin's personal collection."""
+    return "user_admin" # Or use admin user ID if preferred
+    
+def get_global_collection_name() -> str:
+    """Gets the name for the global shared collection."""
+    return "global_kb"
+
+# --- Modify existing functions to use collection_name ---
+
+def store_with_metadata(collection_name: str, chunks: List[Dict], tags: List[str] = None, metadata: Dict = None, filename: str = None) -> List[str]:
+    """Store chunks with metadata in a specific Milvus collection.
     
     Args:
+        collection_name: The name of the collection to store data in.
         chunks: List of dicts with text, embedding, and metadata
         tags: List of tags to apply to all chunks
         metadata: Additional metadata to apply to all chunks
@@ -180,133 +228,106 @@ def store_with_metadata(chunks: List[Dict], tags: List[str] = None, metadata: Di
     Returns:
         List of document IDs for the stored chunks
     """
-    collection = init_collection()
+    collection = init_collection(collection_name) # Get the specific collection
     
-    # Generate a unique doc_id for this batch
+    # Generate a unique doc_id for this batch within this collection context
     doc_id = str(uuid.uuid4())
     
-    # Prepare data in Milvus format - order must match schema
-    chunk_ids = []  # Will be auto-generated
-    doc_ids = []  # doc_id field
-    embeddings = []  # embedding field
-    texts = []  # text field
-    chunk_metadata = []  # metadata field
-    chunk_tags = []  # tags field
-    filenames = []  # filename field
-    categories = []  # category field
-    
+    # Prepare data fields
+    doc_ids = []
+    embeddings = []
+    texts = []
+    chunk_metadata_list = [] # Renamed to avoid confusion
+    chunk_tags = []
+    filenames = []
+    categories = [] # Ensure category is handled
+
+    has_category_field = 'category' in CONFIG.milvus.field_params
+
     for chunk in chunks:
-        # Get filename from chunk metadata first, then document metadata, then parameter
         chunk_metadata_dict = chunk.get('metadata', {})
+        # Determine filename
         chunk_filename = chunk_metadata_dict.get('filename', metadata.get('filename', '') if metadata else '')
-        if filename:  # Override with parameter if provided
+        if filename:
             chunk_filename = filename
-            
-        category = chunk_metadata_dict.get('category', metadata.get('category', '') if metadata else '')
-        
-        # Combine chunk and document metadata
-        combined_metadata = {
-            **(metadata or {}),
-            **(chunk_metadata_dict or {})
-        }
-        
-        # Append all fields in schema order
+
+        # Combine metadata
+        combined_metadata = {**(metadata or {}), **(chunk_metadata_dict or {})}
+
         doc_ids.append(doc_id)
         embeddings.append(chunk['embedding'])
         texts.append(chunk['text'])
-        chunk_metadata.append(json.dumps(combined_metadata))
-        chunk_tags.append(tags or [])
+        chunk_metadata_list.append(json.dumps(combined_metadata))
+        chunk_tags.append(tags or chunk_metadata_dict.get('tags', [])) # Use chunk tags if doc tags not provided
         filenames.append(chunk_filename)
-        categories.append(category)
-    
-    # Insert into collection - order must match schema exactly
+        if has_category_field:
+             category = chunk_metadata_dict.get('category', metadata.get('category', '') if metadata else '')
+             categories.append(category)
+
+    # Prepare insert_data based on actual schema fields defined in get_collection_schema
+    # The order MUST match the fields returned by get_collection_schema()
     insert_data = [
-        doc_ids,  # doc_id field
-        embeddings,  # embedding field
-        texts,  # text field
-        chunk_metadata,  # metadata field
-        chunk_tags,  # tags field
-        filenames,  # filename field
-        categories  # category field
+        doc_ids, 
+        embeddings, 
+        texts, 
+        chunk_metadata_list,
+        chunk_tags,
+        filenames
     ]
-    
+    if has_category_field:
+        insert_data.append(categories)
+
+    # Insert into the specific collection
     collection.insert(insert_data)
-    logger.info(f"Inserted {len(chunks)} chunks into Milvus")
+    logger.info(f"Inserted {len(chunks)} chunks into Milvus collection '{collection_name}'.")
     
-    # Create index if it doesn't exist
-    try:
-        index_info = collection.index().params
-        logger.info("Index already exists")
-    except Exception:
-        logger.info("Creating index")
-        index = {
-            "index_type": CONFIG.milvus.index_params["index_type"],
-            "metric_type": CONFIG.milvus.index_params["metric_type"],
-            "params": CONFIG.milvus.index_params["params"]
-        }
-        collection.create_index(CONFIG.milvus.embedding_field, index)
-        logger.info(f"Created index on {CONFIG.milvus.embedding_field} field")
-    
-    # Flush to ensure data is persisted
+    # Flush data
     collection.flush()
-    logger.info("Flushed data to disk")
+    logger.info(f"Flushed collection '{collection_name}'.")
+
+    # Index creation is handled by init_collection now
     
-    return doc_ids
+    return [doc_id] * len(chunks) # Return the single doc_id used for this batch
 
-def delete_document(filename: str) -> bool:
-    """Delete all chunks associated with a document.
-
-    Args:
-        filename: Filename to delete
-
-    Returns:
-        bool: True if deletion was successful, False otherwise
-    """
+def delete_document(collection_name: str, filename: str) -> bool:
+    """Delete document chunks associated with a filename from a specific collection."""
     try:
-        # Check if collection exists
-        if not utility.has_collection(CONFIG.milvus.collection_name):
-            logger.warning(f"Collection {CONFIG.milvus.collection_name} does not exist")
-            return True  # Return True since there's nothing to delete
-
-        # Get collection with schema and load it
-        collection = init_collection()
-        collection.load()  # Ensure collection is loaded before querying
-
-        # Try to delete by filename first
-        expr = f'{CONFIG.milvus.filename_field} == "{filename}"'
-        results = collection.query(
-            expr=expr,
-            output_fields=[CONFIG.milvus.chunk_id_field],
-            limit=1
-        )
-
-        # If no results found, document doesn't exist
-        if len(results) == 0:
-            logger.info(f"No chunks found for filename: {filename}")
+        collection = init_collection(collection_name) # Ensure collection exists and is loaded
+        
+        expr = f"{CONFIG.milvus.filename_field} == \"{filename}\""
+        logger.info(f"Attempting deletion from '{collection_name}' with expression: {expr}")
+        
+        # Search for matching entities before deleting to log count
+        search_res = collection.query(expr=expr, output_fields=[CONFIG.milvus.chunk_id_field])
+        delete_count = len(search_res)
+        logger.info(f"Found {delete_count} entities to delete for filename '{filename}' in collection '{collection_name}'.")
+        
+        if delete_count > 0:
+            delete_result = collection.delete(expr=expr)
+            logger.info(f"Deletion result for {filename} in {collection_name}: {delete_result}")
+            collection.flush() # Ensure deletion is persisted
             return True
-
-        # Delete all chunks for this document
-        collection.delete(expr)
-        collection.flush()  # Ensure deletion is persisted
-        logger.info(f"Deleted all chunks for filename: {filename}")
-
-        return True
-
+        else:
+            logger.warning(f"No documents found matching filename '{filename}' in collection '{collection_name}' for deletion.")
+            return False # Indicate nothing was deleted
+            
     except Exception as e:
-        logger.error(f"Failed to delete document {filename}: {str(e)}")
+        logger.error(f"Error deleting document {filename} from {collection_name}: {str(e)}", exc_info=True)
         return False
 
 def update_metadata_in_vector_store(
+    collection_name: str,
     filename: str, 
     tags: Optional[List[str]] = None, 
     metadata: Optional[Dict[str, Any]] = None
 ) -> bool:
-    """Update tags and metadata for all chunks associated with a specific filename.
+    """Update tags and metadata for all chunks associated with a specific filename
+    within a given collection.
     
-    Note: Uses a Delete-then-Insert approach as Milvus doesn't support direct 
-    in-place updates for JSON/Array fields based on a filter.
+    Note: Uses a Delete-then-Insert approach.
     
     Args:
+        collection_name: The name of the collection to update.
         filename: The filename whose chunks' metadata should be updated.
         tags: The new list of tags. If None, tags are not updated.
         metadata: The new metadata dictionary. If None, metadata is not updated.
@@ -318,161 +339,119 @@ def update_metadata_in_vector_store(
         logger.warning("Update called with no changes specified for tags or metadata.")
         return True # No changes needed
 
-    collection = init_collection()
+    collection = init_collection(collection_name) # Use the specified collection
     
     # 1. Query for all existing chunks matching the filename
     query_expr = f"{CONFIG.milvus.filename_field} == \"{filename}\""
+    
+    # Determine output fields based on schema
+    schema_fields = [field.name for field in get_collection_schema().fields]
     output_fields = [
-        CONFIG.milvus.chunk_id_field, # Primary key
-        CONFIG.milvus.doc_id_field,   # Original upload batch ID (if correctly stored)
-        CONFIG.milvus.embedding_field,
-        CONFIG.milvus.text_field,
-        CONFIG.milvus.metadata_field, # Original metadata (JSON string)
-        CONFIG.milvus.tags_field,     # Original tags (List[str])
-        CONFIG.milvus.filename_field,
-        'category' # Assuming 'category' exists based on schema in init_collection
+        field for field in schema_fields 
+        if field != CONFIG.milvus.chunk_id_field # Exclude PK for re-insert
     ]
+    # Ensure embedding is included if not already
+    if CONFIG.milvus.embedding_field not in output_fields:
+        output_fields.append(CONFIG.milvus.embedding_field)
+    # Ensure PK is included for deletion reference
+    if CONFIG.milvus.chunk_id_field not in output_fields:
+         output_fields.append(CONFIG.milvus.chunk_id_field)
     
     try:
-        logger.info(f"Querying for chunks with filename '{filename}' to update metadata...")
+        logger.info(f"Querying collection '{collection_name}' for chunks with filename '{filename}' to update metadata...")
         results = collection.query(
             expr=query_expr,
             output_fields=output_fields,
             limit=16384 # Max limit, adjust if needed
         )
-        logger.info(f"Found {len(results)} chunks for filename '{filename}'.")
+        logger.info(f"Found {len(results)} chunks for filename '{filename}' in collection '{collection_name}'.")
 
         if not results:
-            logger.warning(f"No chunks found for filename '{filename}', cannot update metadata.")
+            logger.warning(f"No chunks found for filename '{filename}' in collection '{collection_name}', cannot update metadata.")
             return True # No chunks exist, so "update" is trivially successful
 
-        # Prepare data for re-insertion with updated fields
-        new_doc_ids = [] # Preserving original doc_id (upload batch id)
-        new_embeddings = []
-        new_texts = []
-        new_chunk_metadata_json = []
-        new_chunk_tags = []
-        new_filenames = []
-        new_categories = []
-        
+        # Prepare data for re-insertion
+        insert_data_lists = {field: [] for field in schema_fields if field != CONFIG.milvus.chunk_id_field}
         original_pks = [res[CONFIG.milvus.chunk_id_field] for res in results] # Store original PKs for deletion
 
         for chunk_data in results:
-            # Keep original embedding, text, upload batch id (doc_id), category, filename
-            new_embeddings.append(chunk_data[CONFIG.milvus.embedding_field])
-            new_texts.append(chunk_data[CONFIG.milvus.text_field])
-            new_doc_ids.append(chunk_data[CONFIG.milvus.doc_id_field]) 
-            new_categories.append(chunk_data['category'])
-            new_filenames.append(chunk_data[CONFIG.milvus.filename_field]) # Should be the same filename
-            
             # Update tags if provided, otherwise keep original
-            updated_tags = chunk_data[CONFIG.milvus.tags_field] 
+            updated_tags = chunk_data.get(CONFIG.milvus.tags_field, [])
             if tags is not None:
-                updated_tags = tags 
-            new_chunk_tags.append(updated_tags)
+                updated_tags = tags
             
             # Update metadata if provided
             try:
-                existing_metadata_dict = json.loads(chunk_data[CONFIG.milvus.metadata_field])
+                existing_metadata_dict = json.loads(chunk_data.get(CONFIG.milvus.metadata_field, '{}'))
             except (json.JSONDecodeError, TypeError):
                 existing_metadata_dict = {}
-                
-            updated_metadata_dict = existing_metadata_dict # Start with existing
+            
+            updated_metadata_dict = existing_metadata_dict
             if metadata is not None:
-                 # Preserve essential chunk-specific keys (like page_number) 
-                 # while overriding/adding others from the new document-level metadata.
-                chunk_specific_keys_to_keep = ['page', 'page_number', 'source'] # Add known chunk keys
+                 # Preserve essential chunk-specific keys while overriding/adding others
+                chunk_specific_keys_to_keep = ['page', 'page_number', 'source']
                 preserved_chunk_meta = {k: v for k, v in existing_metadata_dict.items() if k in chunk_specific_keys_to_keep}
-                
-                updated_metadata_dict = {
-                    **metadata, # New document-level metadata
-                    **preserved_chunk_meta # Keep important chunk-specific info
-                }
+                updated_metadata_dict = {**metadata, **preserved_chunk_meta}
 
-            new_chunk_metadata_json.append(json.dumps(updated_metadata_dict))
+            # Populate data for insertion based on schema fields (excluding PK)
+            for field_name in insert_data_lists.keys():
+                if field_name == CONFIG.milvus.tags_field:
+                    insert_data_lists[field_name].append(updated_tags)
+                elif field_name == CONFIG.milvus.metadata_field:
+                    insert_data_lists[field_name].append(json.dumps(updated_metadata_dict))
+                else:
+                    # Copy other fields directly from original data
+                    insert_data_lists[field_name].append(chunk_data.get(field_name))
 
         # 2. Delete the original chunks using their primary keys
-        logger.info(f"Deleting {len(original_pks)} original chunks for filename '{filename}' (PKs: {original_pks[:5]}...).")
-        # Ensure PK list is not empty before attempting delete
         if not original_pks:
              logger.warning("No primary keys found for deletion, skipping delete step.")
         else:
+            logger.info(f"Deleting {len(original_pks)} original chunks from '{collection_name}' for filename '{filename}' (PKs: {original_pks[:5]}...).")
             delete_expr = f"{CONFIG.milvus.chunk_id_field} in {original_pks}"
             delete_result = collection.delete(expr=delete_expr)
-            if delete_result.delete_count != len(original_pks):
-                 logger.warning(f"Expected to delete {len(original_pks)} chunks, but Milvus reported deleting {delete_result.delete_count}. Proceeding with insert.")
+            logger.info(f"Deletion result: {delete_result}") # Log Milvus delete result
+            # Check count (delete_result might be MutationResult with delete_count or pk field)
+            deleted_count = getattr(delete_result, 'delete_count', len(getattr(delete_result, 'primary_keys', [])))
+            if deleted_count != len(original_pks):
+                 logger.warning(f"Expected to delete {len(original_pks)} chunks, but Milvus reported deleting {deleted_count}. Proceeding.")
             else:
-                 logger.info(f"Deletion successful: {delete_result.delete_count} entities deleted.")
-            collection.flush() # Ensure deletion is committed before insertion
-            logger.info("Collection flushed after deleting original chunks.")
-            # Add a small delay if experiencing race conditions, though flush should handle it
-            # time.sleep(0.5) 
+                 logger.info(f"Deletion successful: {deleted_count} entities deleted.")
+            collection.flush() 
+            logger.info(f"Collection '{collection_name}' flushed after deleting original chunks.")
+            # time.sleep(0.5) # Optional delay
 
-        # 3. Insert the chunks with updated metadata/tags
-        # Note: This will assign NEW primary keys (chunk_id_field) as it's auto_id
-        logger.info(f"Inserting {len(new_texts)} chunks with updated metadata for filename '{filename}'...")
-        insert_data = [
-            new_doc_ids,
-            new_embeddings,
-            new_texts,
-            new_chunk_metadata_json,
-            new_chunk_tags,
-            new_filenames,
-            new_categories
-        ]
-        insert_result = collection.insert(insert_data)
+        # 3. Insert the chunks with updated data
+        # Convert dict of lists to list of lists in the correct schema order
+        schema_field_order = [field.name for field in get_collection_schema().fields if not field.is_primary]
+        insert_payload = [insert_data_lists[field_name] for field_name in schema_field_order]
+        
+        logger.info(f"Inserting {len(insert_payload[0])} chunks with updated metadata into '{collection_name}' for filename '{filename}'...")
+        insert_result = collection.insert(insert_payload)
         logger.info(f"Insertion successful: {len(insert_result.primary_keys)} entities inserted with new PKs ({insert_result.primary_keys[:5]}...).")
         collection.flush() # Ensure insertion is committed
-        logger.info("Collection flushed after inserting updated chunks.")
+        logger.info(f"Collection '{collection_name}' flushed after inserting updated chunks.")
         
         return True
 
     except Exception as e:
-        logger.exception(f"Error updating metadata for document '{filename}': {str(e)}")
-        # Consider adding rollback logic if needed (though complex with delete-then-insert)
-        return False
-
-def clean_collection() -> bool:
-    """Clean up the entire Milvus collection.
-    
-    Returns:
-        True if cleanup was successful
-    """
-    try:
-        if utility.has_collection(CONFIG.milvus.collection_name):
-            utility.drop_collection(CONFIG.milvus.collection_name)
-            logger.info(f"Dropped collection {CONFIG.milvus.collection_name}—fresh start! 🧹")
-            # Reinitialize empty collection
-            init_collection()
-            return True
-        else:
-            logger.info(f"No collection {CONFIG.milvus.collection_name} found to clean")
-            return False
-            
-    except Exception as e:
-        logger.error(f"Failed to clean collection: {str(e)}")
+        logger.exception(f"Error updating metadata in collection '{collection_name}' for document '{filename}': {str(e)}")
         return False
 
 def search_by_tags(
+    collection_name: str,
     tags: List[str],
     limit: int = 10
 ) -> List[Dict[str, Any]]:
-    """Search for chunks by tags.
-    
-    Args:
-        tags: List of tags to search for
-        limit: Maximum number of results
-        
-    Returns:
-        List of matching chunks with metadata
-    """
-    collection = Collection(CONFIG.milvus.collection_name)
-    collection.load()
+    """Search for chunks by tags in a specific collection."""
+    collection = init_collection(collection_name) # Use specific collection
+    # collection.load() # init_collection ensures load
     
     # Build tag search expression using array_contains
     tag_conditions = [f"array_contains({CONFIG.milvus.tags_field}, '{tag}')" for tag in tags]
     expr = " && ".join(tag_conditions)
     
+    # Define output fields based on config
     output_fields = [
         CONFIG.milvus.chunk_id_field,
         CONFIG.milvus.doc_id_field,
@@ -481,6 +460,9 @@ def search_by_tags(
         CONFIG.milvus.tags_field,
         CONFIG.milvus.filename_field
     ]
+    # Add category if exists
+    if 'category' in CONFIG.milvus.field_params:
+        output_fields.append('category')
     
     results = collection.query(
         expr=expr,
@@ -491,45 +473,45 @@ def search_by_tags(
     chunks = []
     for hit in results:
         try:
-            metadata = hit.get(CONFIG.milvus.metadata_field, {})  # Already JSON object in Milvus
-            tags = hit.get(CONFIG.milvus.tags_field, [])  # Already array in Milvus
-        except Exception:
+            # Milvus SDK v2.3+ typically returns JSON field as dict and ARRAY as list
+            metadata = hit.get(CONFIG.milvus.metadata_field, {})
+            hit_tags = hit.get(CONFIG.milvus.tags_field, [])
+        except Exception as e:
+            logger.warning(f"Error parsing metadata/tags for hit {hit.get(CONFIG.milvus.chunk_id_field)}: {e}")
             metadata = {}
-            tags = []
+            hit_tags = []
         
-        chunks.append({
+        chunk_entry = {
             'chunk_id': hit.get(CONFIG.milvus.chunk_id_field),
             'doc_id': hit.get(CONFIG.milvus.doc_id_field),
             'text': hit.get(CONFIG.milvus.text_field),
             'metadata': metadata,
-            'tags': tags,
+            'tags': hit_tags,
             'filename': hit.get(CONFIG.milvus.filename_field)
-        })
+        }
+        if 'category' in output_fields:
+             chunk_entry['category'] = hit.get('category')
+        chunks.append(chunk_entry)
     
-    logger.info(f"Found {len(chunks)} chunks with tags {tags}—tagged content locked! 🏷️")
+    logger.info(f"Found {len(chunks)} chunks in '{collection_name}' with tags {tags}")
     return chunks
 
 def search_by_metadata(
+    collection_name: str,
     key: str,
     value: str,
     limit: int = 10
 ) -> List[Dict[str, Any]]:
-    """Search for chunks by metadata field.
-    
-    Args:
-        key: Metadata field name
-        value: Value to search for
-        limit: Maximum number of results
-        
-    Returns:
-        List of matching chunks with metadata
-    """
-    collection = Collection(CONFIG.milvus.collection_name)
-    collection.load()
+    """Search for chunks by metadata field in a specific collection."""
+    collection = init_collection(collection_name) # Use specific collection
+    # collection.load() # init_collection ensures load
     
     # Search in metadata JSON using JSON field access
-    expr = f'metadata["{key}"] == "{value}"'
+    # Ensure value is properly escaped if it contains quotes
+    escaped_value = json.dumps(value) # Use json.dumps for proper string escaping
+    expr = f'{CONFIG.milvus.metadata_field}["{key}"] == {escaped_value}' 
     
+    # Define output fields based on config
     output_fields = [
         CONFIG.milvus.chunk_id_field,
         CONFIG.milvus.doc_id_field,
@@ -538,7 +520,10 @@ def search_by_metadata(
         CONFIG.milvus.tags_field,
         CONFIG.milvus.filename_field
     ]
-    
+    # Add category if exists
+    if 'category' in CONFIG.milvus.field_params:
+        output_fields.append('category')
+        
     results = collection.query(
         expr=expr,
         output_fields=output_fields,
@@ -548,116 +533,161 @@ def search_by_metadata(
     chunks = []
     for hit in results:
         try:
-            metadata = hit.get(CONFIG.milvus.metadata_field, {})  # Already JSON object in Milvus
-            tags = hit.get(CONFIG.milvus.tags_field, [])  # Already array in Milvus
-        except Exception:
+            metadata = hit.get(CONFIG.milvus.metadata_field, {})
+            tags = hit.get(CONFIG.milvus.tags_field, [])
+        except Exception as e:
+            logger.warning(f"Error parsing metadata/tags for hit {hit.get(CONFIG.milvus.chunk_id_field)}: {e}")
             metadata = {}
             tags = []
         
-        chunks.append({
+        chunk_entry = {
             'chunk_id': hit.get(CONFIG.milvus.chunk_id_field),
             'doc_id': hit.get(CONFIG.milvus.doc_id_field),
             'text': hit.get(CONFIG.milvus.text_field),
             'metadata': metadata,
             'tags': tags,
             'filename': hit.get(CONFIG.milvus.filename_field)
-        })
+        }
+        if 'category' in output_fields:
+             chunk_entry['category'] = hit.get('category')
+        chunks.append(chunk_entry)
     
-    logger.info(f"Found {len(chunks)} chunks with {key}={value}—metadata matched! 🔍")
+    logger.info(f"Found {len(chunks)} chunks in '{collection_name}' with {key}={value}")
     return chunks
 
 def search_collection(
     query_vector: List[float],
-    collection_name: str = None,
+    collection_names: List[str],
     expr: str = None,
     limit: int = 10,
     search_params: Optional[Dict[str, Any]] = None,
-    output_fields: Optional[List[str]] = None
+    output_fields: Optional[List[str]] = None,
+    consistency_level: Optional[str] = None
 ) -> List[Dict[str, Any]]:
-    """Search the Milvus collection.
+    """Search one or more Milvus collections.
 
     Args:
-        query_vector: Query vector to search with
-        collection_name: Name of collection to search
-        expr: Optional filter expression
-        limit: Maximum number of results to return
-        search_params: Optional search parameters
-        output_fields: Optional list of fields to return in results
+        query_vector: Query vector to search with.
+        collection_names: List of collection names to search.
+        expr: Optional filter expression (applied to all collections).
+        limit: Maximum number of results to return *in total* across collections.
+        search_params: Optional search parameters.
+        output_fields: Optional list of fields to return in results.
+        consistency_level: Optional consistency level override.
 
     Returns:
-        List of search results with distances
+        List of search results with distances, sorted by score.
     """
+    if not collection_names:
+        logger.warning("search_collection called with no collection names.")
+        return []
+        
     try:
-        # Ensure connection first
         ensure_connection()
         
-        # Use default collection name if not specified
-        if collection_name is None:
-            collection_name = CONFIG.milvus.collection_name
-
-        # Get collection
-        collection = Collection(collection_name)
-        collection.load()
-
         # Set default search params if not provided
-        if search_params is None:
-            search_params = {
-                "metric_type": "L2",
-                "params": {"nprobe": 10}
-            }
+        search_params_to_use = search_params or CONFIG.milvus.search_params
 
-        # Set default output fields if not provided, using config values
-        if output_fields is None:
-            output_fields = [
-                CONFIG.milvus.text_field,
-                CONFIG.milvus.metadata_field,
-                CONFIG.milvus.tags_field,
-                CONFIG.milvus.filename_field # Also include filename by default
-            ]
+        # Set default output fields if not provided
+        output_fields_to_use = output_fields or [
+            CONFIG.milvus.text_field,
+            CONFIG.milvus.metadata_field,
+            CONFIG.milvus.tags_field,
+            CONFIG.milvus.filename_field # Also include filename by default
+        ]
+        # Ensure primary key is always included for identification if needed later
+        pk_field = CONFIG.milvus.chunk_id_field
+        if pk_field not in output_fields_to_use:
+             output_fields_to_use.append(pk_field)
 
-        # Execute search using config field names
-        results = collection.search(
-            data=[query_vector],
-            anns_field=CONFIG.milvus.embedding_field,
-            param=search_params,
-            limit=limit,
-            expr=expr,
-            output_fields=output_fields
-        )
-
-        # Format results using config field names
-        formatted_results = []
-        for hits in results:
-            for hit in hits:
-                # Safely get entity fields using .get(key) and providing default with 'or'
-                text_value = hit.entity.get(CONFIG.milvus.text_field) or ""
-                metadata_value = hit.entity.get(CONFIG.milvus.metadata_field) or {}
+        all_results = []
+        
+        # Milvus multi-collection search is not directly supported in v2.3 for vector search.
+        # We need to search each collection individually and merge results.
+        # Note: This is less efficient than a native multi-collection search.
+        limit_per_collection = limit # Fetch top `limit` from each collection initially
+        
+        for collection_name in collection_names:
+            try:
+                collection = init_collection(collection_name) # Ensure exists and load
+                logger.info(f"Searching collection: {collection_name}")
                 
-                result = {
-                    CONFIG.milvus.text_field: text_value,
-                    CONFIG.milvus.metadata_field: metadata_value,
-                    "score": hit.distance # Use raw distance or convert as needed
+                search_kwargs = {
+                    "data": [query_vector],
+                    "anns_field": CONFIG.milvus.embedding_field,
+                    "param": search_params_to_use,
+                    "limit": limit_per_collection,
+                    "expr": expr,
+                    "output_fields": output_fields_to_use
                 }
-                # Include other output fields if they exist in the entity
-                if CONFIG.milvus.tags_field in output_fields:
-                    result[CONFIG.milvus.tags_field] = hit.entity.get(CONFIG.milvus.tags_field) or []
-                if CONFIG.milvus.filename_field in output_fields:
-                    result[CONFIG.milvus.filename_field] = hit.entity.get(CONFIG.milvus.filename_field) or ""
-                # Add other potential fields like chunk_id, doc_id if needed and requested
+                # Add consistency level if provided
+                consistency = consistency_level or CONFIG.milvus.consistency_level
+                if consistency:
+                     search_kwargs["consistency_level"] = consistency
                 
-                formatted_results.append(result)
+                results = collection.search(**search_kwargs)
 
-        return formatted_results
+                # Process results for this collection
+                for hit in results[0]:
+                    # Get the dictionary containing the actual fields (handles weird nesting)
+                    raw_entity_dict = hit.entity.to_dict()
+                    entity_data = raw_entity_dict.get('entity', raw_entity_dict) # Fallback to raw dict if no inner 'entity' key
+                    
+                    # Parse the metadata field, handle errors
+                    parsed_metadata = {}
+                    metadata_content = entity_data.get(CONFIG.milvus.metadata_field)
+                    if isinstance(metadata_content, str):
+                        try:
+                            parsed_metadata = json.loads(metadata_content)
+                        except json.JSONDecodeError:
+                            logger.warning(f"Failed to parse metadata JSON string for hit {hit.id}: {metadata_content}")
+                            parsed_metadata = {"error": "invalid json", "raw": metadata_content}
+                    elif isinstance(metadata_content, dict): # Handle case where it's already a dict
+                        parsed_metadata = metadata_content
+                    # else: leave parsed_metadata as empty dict {}
+
+                    # Construct the final result dictionary in the expected format
+                    structured_result = {
+                        "chunk_id": hit.id, # Use Milvus ID as chunk_id
+                        "score": hit.distance,
+                        "text": entity_data.get(CONFIG.milvus.text_field, ""),
+                        "tags": entity_data.get(CONFIG.milvus.tags_field, []),
+                        # Ensure metadata is a dict containing filename etc.
+                        "metadata": {
+                            "source": parsed_metadata.get("source", entity_data.get(CONFIG.milvus.filename_field, "")),
+                            "filename": entity_data.get(CONFIG.milvus.filename_field, parsed_metadata.get("filename", "")),
+                            "page": parsed_metadata.get("page")
+                        }
+                    }
+                    all_results.append(structured_result) # Append the correctly structured dict
+
+            except Exception as col_search_e:
+                 logger.error(f"Error searching collection '{collection_name}': {col_search_e}", exc_info=True)
+                 # Continue searching other collections
+                 
+        # Sort all collected results by score (distance) - lower is better for L2
+        # Adjust sort order if using IP (higher is better)
+        sort_reverse = (search_params_to_use.get("metric_type", "L2").upper() == "IP")
+        all_results.sort(key=lambda x: x["score"], reverse=sort_reverse)
+        
+        # Return the top N overall results
+        final_results = all_results[:limit]
+        logger.info(f"Multi-collection search completed. Returning {len(final_results)} top results from {len(collection_names)} collections.")
+        return final_results
 
     except Exception as e:
-        logging.error(f"Search failed: {str(e)}")
-        raise
+        logger.exception(f"Multi-collection search failed: {e}")
+        return [] # Return empty list on error
 
 async def disconnect_milvus():
     """Disconnect from Milvus server."""
     try:
-        await connections.disconnect("default")
-        logger.info("Disconnected from Milvus")
+        # Check if connection exists before trying to disconnect
+        if connections.has_connection("default"):
+            connections.disconnect("default")
+            logger.info("Disconnected from Milvus")
+        else:
+            logger.info("No active Milvus connection to disconnect.")
     except Exception as e:
         logger.error(f"Failed to disconnect from Milvus: {str(e)}")
-        raise
+        # Don't raise here, just log

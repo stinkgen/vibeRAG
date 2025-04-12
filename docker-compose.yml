@@ -1,4 +1,5 @@
-version: '3.5'
+# Use this file to define the services that make up your application.
+# For more information, see: https://docs.docker.com/compose/compose-file/
 
 services:
   etcd:
@@ -62,6 +63,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    restart: unless-stopped
 
   backend:
     container_name: vibe-backend
@@ -78,12 +80,25 @@ services:
       - "8000:8000"
     volumes:
       - ./backend/src:/app/src
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes:/app/volumes
+      - ./backend/models:/app/models
+      - ./backend/data:/app/data
     depends_on:
       standalone:
          condition: service_healthy
     networks:
       - vibe-network
+    # Add extra_hosts for Linux Docker to resolve host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # --- Add GPU Request using deploy key ---
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1 # Or 'all' to request all GPUs
+              capabilities: [gpu, compute, utility]
+    # ---------------------------------------
     command: ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   frontend:

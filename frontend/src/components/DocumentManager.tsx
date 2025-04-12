@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import styles from './DocumentManager.module.css';
 import API_ENDPOINTS from '../config/api';
@@ -9,6 +9,7 @@ interface DocInfo {
     filename: string;
     tags: string[];
     metadata: Record<string, any>;
+    scope?: string; // Added scope field (e.g., 'user_1', 'global_kb')
     [key: string]: any; // Add index signature for dynamic access
 }
 
@@ -25,6 +26,12 @@ interface EditingDocState extends DocInfo {
     // Add separate fields for editing to avoid modifying original 'docs' state directly
     editingTags: string; // Comma-separated string for editing
     editingMetadata: { key: string; value: string }[]; // Array of key-value pairs for editing
+}
+
+// Interface for User object (simplified, based on decodeJwt in App.tsx)
+interface UserContext {
+    id: number | null;
+    role: string | null;
 }
 
 const DocumentIcon = () => (
@@ -45,6 +52,24 @@ const truncateString = (str: string, maxLength: number): string => {
     if (str.length <= maxLength) return str;
     return str.substring(0, maxLength - 3) + '...';
 };
+
+// Decode JWT helper (copied from App.tsx for simplicity)
+function decodeJwt(token: string): { id?: number; role?: string } | null {
+    try {
+        const base64Url = token.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(
+            atob(base64)
+                .split('')
+                .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+                .join('')
+        );
+        return JSON.parse(jsonPayload);
+    } catch (error) {
+        console.error("Failed to decode JWT:", error);
+        return null;
+    }
+}
 
 const DocumentManager: React.FC = () => {
     // State management vibes
@@ -75,9 +100,20 @@ const DocumentManager: React.FC = () => {
     const [editLoading, setEditLoading] = useState(false);
     const [editError, setEditError] = useState<string | null>(null);
 
+    // State for upload target (admin only)
+    const [uploadTarget, setUploadTarget] = useState<'user' | 'global'>('user');
+
+    // Current user info
+    const [currentUser, setCurrentUser] = useState<UserContext>({ id: null, role: null });
+
     // Load docs on mount
     useEffect(() => {
         fetchDocs();
+        const token = localStorage.getItem('vibeRAG_authToken');
+        if (token) {
+            const decoded = decodeJwt(token);
+            setCurrentUser({ id: decoded?.id ?? null, role: decoded?.role ?? null });
+        }
     }, []);
 
     // Fetch all docs from the backend
@@ -162,6 +198,11 @@ const DocumentManager: React.FC = () => {
         formData.append('tags', JSON.stringify(tagList));
         formData.append('metadata', JSON.stringify(metadata));
 
+        // Add upload target for admins
+        if (currentUser.role === 'admin') {
+            formData.append('target_collection', uploadTarget);
+        }
+
         try {
             const response = await axios.post<UploadResponse>(API_ENDPOINTS.UPLOAD, formData);
             console.log('Upload complete—doc vibes strong! 📂');
@@ -191,8 +232,14 @@ const DocumentManager: React.FC = () => {
     };
 
     // Handle document deletion
-    const handleDelete = async (filename: string) => {
-        if (!window.confirm('Sure you wanna delete this doc, brah?')) {
+    const handleDelete = async (filename: string, scope: string | undefined) => {
+        // Add extra check for global scope deletion attempt by non-admin
+        if (scope?.includes('global') && currentUser.role !== 'admin') {
+            setError("Only admins can delete documents from the global scope.");
+            return;
+        }
+        
+        if (!window.confirm(`Are you sure you want to delete ${filename}? This action cannot be undone.`)) {
             return;
         }
 
@@ -435,7 +482,7 @@ const DocumentManager: React.FC = () => {
                                     </button>
                                     <button 
                                         className={`${styles.actionButton} ${styles.deleteButton}`}
-                                        onClick={() => handleDelete(doc.filename)}
+                                        onClick={() => handleDelete(doc.filename, doc.scope)}
                                         title="Delete Document"
                                     >
                                         {/* Delete Icon */} 
@@ -489,7 +536,7 @@ const DocumentManager: React.FC = () => {
                             </button>
                             <button 
                                 className={`${styles.actionButton} ${styles.deleteButton}`}
-                                onClick={() => handleDelete(doc.filename)}
+                                onClick={() => handleDelete(doc.filename, doc.scope)}
                                 title="Delete Document"
                             >
                                 <svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/></svg>
@@ -653,6 +700,33 @@ const DocumentManager: React.FC = () => {
                         />
                     </div>
 
+                    {/* Admin Upload Target Selector */} 
+                    {currentUser.role === 'admin' && (
+                        <div className={styles.formGroup}>
+                            <label>Target Collection:</label>
+                            <div className={styles.radioGroup}>
+                                <label>
+                                    <input 
+                                        type="radio" 
+                                        value="user" 
+                                        checked={uploadTarget === 'user'}
+                                        onChange={() => setUploadTarget('user')} 
+                                    />
+                                    Admin Personal ({get_admin_collection_name()})
+                                </label>
+                                <label>
+                                    <input 
+                                        type="radio" 
+                                        value="global" 
+                                        checked={uploadTarget === 'global'}
+                                        onChange={() => setUploadTarget('global')} 
+                                    />
+                                    Global ({get_global_collection_name()})
+                                </label>
+                            </div>
+                        </div>
+                    )}
+
                     <button
                         type="submit"
                         className={styles.button}
@@ -727,5 +801,9 @@ const DocumentManager: React.FC = () => {
         </div>
     );
 };
+
+// Need helper functions used in JSX above
+const get_admin_collection_name = () => "user_admin";
+const get_global_collection_name = () => "global_kb";
 
 export default DocumentManager; 

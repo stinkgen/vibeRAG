@@ -3,6 +3,7 @@ const path = require('path');
 // const { createProxyMiddleware } = require('http-proxy-middleware'); // Remove HPM
 const WebSocket = require('ws'); // Import the ws library
 const axios = require('axios'); // Add axios for manual HTTP proxying
+const url = require('url'); // Import the url module
 
 // === SERVER STARTUP LOG ===
 console.log("*** Server.js starting - MANUAL HTTP & WS Proxying ***"); 
@@ -17,6 +18,13 @@ app.use((req, res, next) => {
 });
 // ======================================================
 
+// === Body Parsing Middleware (BEFORE Proxy) ===
+// Handles application/json
+app.use(express.json());
+// Handles application/x-www-form-urlencoded
+app.use(express.urlencoded({ extended: false }));
+// ==============================================
+
 const port = process.env.PORT || 3000; // Use environment variable or default to 3000
 const backendTarget = 'http://backend:8000'; // Target backend service
 const backendWsTarget = 'ws://backend:8000/api/v1/ws/chat'; // WebSocket specific target
@@ -26,48 +34,66 @@ app.use('/api', async (req, res) => {
   const backendUrl = `${backendTarget}${req.originalUrl}`;
   console.log(`[Manual Proxy] Forwarding ${req.method} ${req.originalUrl} to ${backendUrl}`);
 
+  const contentType = req.headers['content-type'] || '';
+  // Determine if we should stream the request body or send parsed body
+  const shouldStream = req.method !== 'GET' && req.method !== 'HEAD' && !contentType.includes('application/json') && !contentType.includes('application/x-www-form-urlencoded');
+
+  console.log(`[Manual Proxy] Content-Type: ${contentType}, ShouldStream: ${shouldStream}`);
+
   try {
-    // Prepare headers, ensuring original Content-Type is passed for multipart
+    // Prepare headers, ensuring original Content-Type is passed
     const requestHeaders = {
       ...req.headers,
       host: new URL(backendTarget).host, // Set correct host for backend
-      // Remove headers that might cause issues or are set by axios/http agent
-      'content-length': undefined, 
-      'transfer-encoding': undefined,
       connection: 'keep-alive',
+      // Let axios handle content-length for non-streamed requests
+      'content-length': shouldStream ? req.headers['content-length'] : undefined,
+      'transfer-encoding': undefined, // Avoid potential issues
     };
-    // Ensure Content-Type from the original request is preserved
-    if (req.headers['content-type']) {
-        requestHeaders['content-type'] = req.headers['content-type'];
-    }
 
-    const response = await axios({
+    const axiosConfig = {
       method: req.method,
       url: backendUrl,
-      headers: requestHeaders, // Use the prepared headers
-      // Stream the incoming request body directly
-      // Axios should handle piping req when it's a stream
-      data: req, 
-      responseType: 'stream', 
-      validateStatus: status => true 
-    });
+      headers: requestHeaders,
+      // Send parsed body for JSON/form data, otherwise stream
+      data: shouldStream ? req : req.body,
+      // Set responseType based on whether we are streaming
+      responseType: shouldStream ? 'stream' : 'json', // Expect JSON if not streaming
+      validateStatus: status => true // Handle all status codes manually
+    };
+
+    const response = await axios(axiosConfig);
 
     // Forward status code and headers from backend response
-    res.writeHead(response.status, response.headers);
-    // Pipe the backend response stream to the client response
-    response.data.pipe(res);
+    res.status(response.status);
+    // Filter out headers that shouldn't be forwarded directly
+    const responseHeaders = { ...response.headers };
+    delete responseHeaders['transfer-encoding'];
+    delete responseHeaders['connection'];
+    // delete responseHeaders['content-length']; // Let express handle this
+    res.set(responseHeaders);
+
+    if (shouldStream && response.data?.pipe) {
+      // Pipe the backend response stream to the client response
+      response.data.pipe(res);
+    } else {
+      // Send the parsed JSON response
+      res.json(response.data);
+    }
 
   } catch (error) {
     console.error(`[Manual Proxy] Error forwarding request to ${backendUrl}:`, error.message);
     if (error.response) {
       // If backend responded with an error
-      res.writeHead(error.response.status, error.response.headers);
-      error.response.data.pipe(res);
+      console.error(`[Manual Proxy] Backend error status: ${error.response.status}`);
+      res.status(error.response.status).send(error.response.data);
     } else if (error.request) {
       // If request was made but no response received (e.g., timeout, ECONNREFUSED)
+      console.error(`[Manual Proxy] No response from backend (ECONNREFUSED or timeout).`);
       res.status(504).send('Gateway Timeout - Backend did not respond');
     } else {
       // Other errors
+      console.error(`[Manual Proxy] Non-response error: ${error.message}`);
       res.status(500).send('Internal Server Error during proxying');
     }
   }
@@ -140,18 +166,25 @@ function setupHeartbeat(ws, name) {
 
 // Handle WebSocket upgrades manually using the 'ws' library
 server.on('upgrade', (request, clientSocket, head) => {
-  const pathname = request.url;
-  console.log(`[Upgrade] Attempting upgrade for path: ${pathname}`);
+  // Parse the request URL to separate pathname and query string
+  const parsedUrl = url.parse(request.url);
+  const pathname = parsedUrl.pathname;
 
+  console.log(`[Upgrade] Attempting upgrade for path: ${request.url} (pathname: ${pathname})`);
+
+  // Check only the pathname for the WebSocket route
   if (pathname === '/api/v1/ws/chat') {
-    console.log(`[Upgrade] Path matches. Handling upgrade...`);
+    console.log(`[Upgrade] Pathname matches. Handling upgrade...`);
 
     wss.handleUpgrade(request, clientSocket, head, (wsClient) => {
       console.log('[WSS] Client WebSocket handshake complete.');
       setupHeartbeat(wsClient, 'Client'); // Setup client heartbeat
 
-      console.log(`[WSS] Establishing backend connection to ${backendWsTarget}`);
-      const backendSocket = new WebSocket(backendWsTarget);
+      // Construct backend URL - Forward query string (like ?token=...)
+      const backendWsTargetUrl = `${backendWsTarget}${parsedUrl.search || ''}`;
+      console.log(`[WSS] Establishing backend connection to ${backendWsTargetUrl}`);
+
+      const backendSocket = new WebSocket(backendWsTargetUrl);
       setupHeartbeat(backendSocket, 'Backend'); // Setup backend heartbeat
 
       // --- Error Handling for Backend Connection ---
@@ -165,23 +198,24 @@ server.on('upgrade', (request, clientSocket, head) => {
 
         // --- Relay messages from Client to Backend ---
         wsClient.on('message', (message) => {
-          console.log('[WSS Relay C->B] Received message from client');
+          // Log the type and potentially the content (truncated)
+          const messageType = Buffer.isBuffer(message) ? 'Buffer' : (typeof message);
+          const messagePreview = Buffer.isBuffer(message) ? message.toString('utf8', 0, 100) : (typeof message === 'string' ? message.substring(0, 100) : '');
+          console.log(`[WSS Relay C->B] Received message from client (Type: ${messageType}). Preview: ${messagePreview}...`);
+          
           if (backendSocket.readyState === WebSocket.OPEN) {
-            backendSocket.send(message);
+            // Ensure message is sent as a string to the backend
+            const messageString = Buffer.isBuffer(message) ? message.toString('utf8') : message;
+            backendSocket.send(messageString); 
           }
         });
 
         // --- Relay messages from Backend to Client ---
         backendSocket.on('message', (message) => {
-          // console.log('[WSS Relay B->C] Raw message from backend:', message); // Debug log
-          
-          // Convert message buffer to UTF-8 string before sending to client
           const messageString = message.toString('utf8');
-          // console.log('[WSS Relay B->C] Forwarding string to client:', messageString);
-          
-          console.log('[WSS Relay B->C] Received message from backend (forwarding as string)'); // Keep original log concise
+          console.log('[WSS Relay B->C] Received message from backend (forwarding as string)');
           if (wsClient.readyState === WebSocket.OPEN) {
-            wsClient.send(messageString); // Send the string, not the raw buffer
+            wsClient.send(messageString);
           }
         });
 
@@ -189,14 +223,14 @@ server.on('upgrade', (request, clientSocket, head) => {
         wsClient.on('close', (code, reason) => {
           console.log(`[WSS Client] Closed connection. Code: ${code}, Reason: ${reason?.toString()}`);
           if (backendSocket.readyState === WebSocket.OPEN) {
-            backendSocket.close(); // Close backend when client closes
+            backendSocket.close();
           }
         });
 
         backendSocket.on('close', (code, reason) => {
           console.log(`[WSS Backend] Closed connection. Code: ${code}, Reason: ${reason?.toString()}`);
           if (wsClient.readyState === WebSocket.OPEN) {
-            wsClient.close(); // Close client when backend closes
+            wsClient.close();
           }
         });
 
@@ -208,23 +242,22 @@ server.on('upgrade', (request, clientSocket, head) => {
           }
         });
 
-         backendSocket.on('error', (err) => { // Note: This duplicates the outer error handler, but scoped here too
+         backendSocket.on('error', (err) => {
           console.error(`[WSS Backend] Error during relay: ${err.message}`);
           if (wsClient.readyState === WebSocket.OPEN) {
             wsClient.close(1011, 'Backend error');
           }
         });
       });
-      
-      // Initial backend connection error is handled outside/above the 'open' handler
+      // Note: Initial backend connection error handled by the 'error' handler above
 
     }); // End of wss.handleUpgrade callback
 
   } else {
-    // If the path doesn't match, destroy the socket to prevent hanging connections
-    console.log(`[Upgrade] Path ${pathname} does not match. Destroying socket.`);
+    // If the path doesn't match, destroy the socket
+    console.log(`[Upgrade] Pathname ${pathname} does not match target /api/v1/ws/chat. Destroying socket.`);
     clientSocket.destroy();
   }
-});
+}); // End of server.on('upgrade')
 
-console.log('Express server configured with manual WebSocket proxying using \'ws\' library.'); 
+console.log("Express server configured with manual WebSocket proxying using 'ws' library."); 

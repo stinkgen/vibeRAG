@@ -17,6 +17,7 @@ pyyaml
 python-dotenv
 minio
 tqdm
+tiktoken
 
 # Optional LLM providers
 anthropic
@@ -26,3 +27,9 @@ openai
 pytest
 pytest-asyncio
 httpx
+
+# Authentication (Phase 1)
+bcrypt
+PyJWT
+SQLAlchemy
+Alembic # For database migrations (optional but good practice)
